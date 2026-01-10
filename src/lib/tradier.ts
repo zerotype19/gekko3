@@ -109,33 +109,60 @@ export class TradierClient {
   }
 
   /**
-   * Place an order
+   * Place an order (Supports Multileg)
    * @param orderPayload Tradier order payload
    * @returns Order ID and status
    */
   async placeOrder(orderPayload: {
-    class: 'option' | 'equity';
+    class: 'option' | 'equity' | 'multileg';
     symbol: string;
-    option_symbol?: string;
-    side: 'buy' | 'buy_to_open' | 'buy_to_close' | 'sell' | 'sell_to_open' | 'sell_to_close';
-    quantity: number;
     type: 'market' | 'limit';
-    price?: number;
     duration: 'day' | 'gtc';
+    price?: number;
+    
+    // For Single Leg
+    option_symbol?: string;
+    side?: 'buy' | 'buy_to_open' | 'buy_to_close' | 'sell' | 'sell_to_open' | 'sell_to_close';
+    quantity?: number;
+
+    // For Multi Leg
+    'option_symbol[]'?: string[];
+    'side[]'?: string[];
+    'quantity[]'?: number[];
   }): Promise<{ order_id: string; status: string }> {
     const formData = new FormData();
     formData.append('class', orderPayload.class);
     formData.append('symbol', orderPayload.symbol);
-    if (orderPayload.option_symbol) {
-      formData.append('option_symbol', orderPayload.option_symbol);
-    }
-    formData.append('side', orderPayload.side);
-    formData.append('quantity', orderPayload.quantity.toString());
     formData.append('type', orderPayload.type);
+    formData.append('duration', orderPayload.duration);
+    
     if (orderPayload.price !== undefined) {
       formData.append('price', orderPayload.price.toFixed(2));
     }
-    formData.append('duration', orderPayload.duration);
+
+    // Handle Multileg Arrays
+    if (orderPayload.class === 'multileg') {
+      const symbols = orderPayload['option_symbol[]'] || [];
+      const sides = orderPayload['side[]'] || [];
+      const quantities = orderPayload['quantity[]'] || [];
+
+      // Tradier expects arrays to be appended individually with indexed keys
+      // e.g. option_symbol[0], option_symbol[1]...
+      symbols.forEach((sym, idx) => formData.append(`option_symbol[${idx}]`, sym));
+      sides.forEach((side, idx) => formData.append(`side[${idx}]`, side));
+      quantities.forEach((qty, idx) => formData.append(`quantity[${idx}]`, qty.toString()));
+    } else {
+      // Single Leg
+      if (orderPayload.option_symbol) {
+        formData.append('option_symbol', orderPayload.option_symbol);
+      }
+      if (orderPayload.side) {
+        formData.append('side', orderPayload.side);
+      }
+      if (orderPayload.quantity !== undefined) {
+        formData.append('quantity', orderPayload.quantity.toString());
+      }
+    }
 
     const data = await this.request<{
       order?: {

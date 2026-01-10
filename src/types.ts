@@ -26,8 +26,14 @@ export interface TradeProposal {
   // Trade details
   symbol: string; // Underlying symbol (e.g., "SPY")
   strategy: 'CREDIT_SPREAD';
-  side: 'BUY' | 'SELL' | 'OPEN' | 'CLOSE';
+  
+  // OPEN = Enter Position, CLOSE = Exit Position
+  side: 'OPEN' | 'CLOSE';
+  
   quantity: number;
+  
+  // LIMIT PRICE is mandatory for spreads (Net Credit for Open, Net Debit for Close)
+  price: number;
 
   // Spread legs (for credit spreads, typically 2 legs)
   legs: SpreadLeg[];

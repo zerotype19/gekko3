@@ -188,8 +188,8 @@ export class GatekeeperDO {
 
     const evaluatedAt = Date.now();
 
-    // 1. Verify Signature (stub for now)
-    const isValidSignature = await verifySignature(proposal, signature, this.env.API_SECRET);
+    // 1. Verify Signature
+    const isValidSignature = await verifySignature(proposal as unknown as { id: string; timestamp: number; signature?: string; [key: string]: unknown }, signature, this.env.API_SECRET);
     if (!isValidSignature) {
       return {
         status: 'REJECTED',
@@ -234,6 +234,15 @@ export class GatekeeperDO {
       };
     }
 
+    // Strict Limit Price Check
+    if (proposal.price === undefined || proposal.price === null || proposal.price <= 0) {
+      return {
+        status: 'REJECTED',
+        rejectionReason: 'Limit Price is required for safety',
+        evaluatedAt,
+      };
+    }
+
     // DTE Check: Calculate from first leg's expiration
     if (proposal.legs.length === 0) {
       return {
@@ -272,22 +281,28 @@ export class GatekeeperDO {
       };
     }
 
-    const openPositionsCount = await this.getOpenPositionsCount();
-    if (openPositionsCount >= CONSTITUTION.maxOpenPositions) {
-      return {
-        status: 'REJECTED',
-        rejectionReason: `Max open positions reached: ${openPositionsCount}/${CONSTITUTION.maxOpenPositions}`,
-        evaluatedAt,
-      };
+    // Only check max positions if we are OPENING a new one
+    if (proposal.side === 'OPEN') {
+      const openPositionsCount = await this.getOpenPositionsCount();
+      if (openPositionsCount >= CONSTITUTION.maxOpenPositions) {
+        return {
+          status: 'REJECTED',
+          rejectionReason: `Max open positions reached: ${openPositionsCount}/${CONSTITUTION.maxOpenPositions}`,
+          evaluatedAt,
+        };
+      }
     }
 
-    const symbolPositionCount = await this.getSymbolPositionCount(proposal.symbol);
-    if (symbolPositionCount >= CONSTITUTION.maxConcentrationPerSymbol) {
-      return {
-        status: 'REJECTED',
-        rejectionReason: `Max concentration per symbol reached for ${proposal.symbol}: ${symbolPositionCount}/${CONSTITUTION.maxConcentrationPerSymbol}`,
-        evaluatedAt,
-      };
+    // Only check symbol concentration if we are OPENING a new position
+    if (proposal.side === 'OPEN') {
+      const symbolPositionCount = await this.getSymbolPositionCount(proposal.symbol);
+      if (symbolPositionCount >= CONSTITUTION.maxConcentrationPerSymbol) {
+        return {
+          status: 'REJECTED',
+          rejectionReason: `Max concentration per symbol reached for ${proposal.symbol}: ${symbolPositionCount}/${CONSTITUTION.maxConcentrationPerSymbol}`,
+          evaluatedAt,
+        };
+      }
     }
 
     // 6. Context Checks
@@ -377,23 +392,55 @@ export class GatekeeperDO {
 
       // If approved, execute trade
       try {
-        // Build Tradier order payload
-        // For credit spreads, we need to send a multi-leg order
-        // Simplified: Assume first leg is the primary order
-        const firstLeg = proposal.legs[0];
-        const orderPayload = {
-          class: 'option' as const,
-          symbol: proposal.symbol,
-          option_symbol: firstLeg.symbol,
-          side: proposal.side === 'BUY' ? 'buy_to_open' : 'sell_to_open' as 'buy_to_open' | 'sell_to_open',
-          quantity: proposal.quantity,
-          type: 'market' as const,
-          duration: 'day' as const,
-        };
+        let orderResult;
 
-        const orderResult = await this.tradierClient.placeOrder(orderPayload);
+        if (proposal.strategy === 'CREDIT_SPREAD') {
+          // Construct Multileg Order
+          const optionSymbols: string[] = [];
+          const sides: string[] = [];
+          const quantities: number[] = [];
 
-        // Record order in D1
+          for (const leg of proposal.legs) {
+            optionSymbols.push(leg.symbol);
+            quantities.push(leg.quantity);
+
+            // LOGIC FOR SIDE MAPPING:
+            // If side is OPEN: SELL -> sell_to_open, BUY -> buy_to_open
+            // If side is CLOSE: SELL -> buy_to_close (Closing Short), BUY -> sell_to_close (Closing Long)
+            
+            if (proposal.side === 'OPEN') {
+              // Entry
+              if (leg.side === 'SELL') {
+                sides.push('sell_to_open');
+              } else {
+                sides.push('buy_to_open');
+              }
+            } else {
+              // Exit (Invert)
+              if (leg.side === 'SELL') {
+                sides.push('buy_to_close'); // Was Short, now Buying to Close
+              } else {
+                sides.push('sell_to_close'); // Was Long, now Selling to Close
+              }
+            }
+          }
+
+          orderResult = await this.tradierClient.placeOrder({
+            class: 'multileg',
+            symbol: proposal.symbol,
+            type: 'limit', // ALWAYS LIMIT
+            price: proposal.price, // Mandatory limit price
+            duration: 'day',
+            'option_symbol[]': optionSymbols,
+            'side[]': sides,
+            'quantity[]': quantities
+          });
+
+        } else {
+          throw new Error('Unsupported strategy for execution');
+        }
+
+        // Record Order
         await this.env.DB.prepare(
           `INSERT INTO orders (id, proposal_id, symbol, status, quantity, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, unixepoch('now'), unixepoch('now'))`
