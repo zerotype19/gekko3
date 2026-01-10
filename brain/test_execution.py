@@ -43,6 +43,14 @@ async def test_execution():
     # Use a realistic SPY price (around current market)
     spy_price = 425.0  # Adjust if needed for strike selection
     
+    # Calculate strikes
+    sell_strike = int(spy_price * 0.98)  # 2% OTM
+    buy_strike = int(spy_price * 0.96)   # 4% OTM
+    
+    # CRITICAL FIX: Tradier/OCC requires strike * 1000 in option symbol
+    sell_strike_fmt = int(sell_strike * 1000)  # Multiply by 1000 for OCC format
+    buy_strike_fmt = int(buy_strike * 1000)    # Multiply by 1000 for OCC format
+    
     proposal = {
         "symbol": "SPY",
         "strategy": "CREDIT_SPREAD",  # Correct enum from types.ts
@@ -52,18 +60,18 @@ async def test_execution():
         "legs": [
             # Short Put Leg (Sell higher strike)
             {
-                "symbol": f"SPY{expiry_date.replace('-', '')[2:]}P{int(spy_price * 0.98):08d}",  # Mock option symbol
+                "symbol": f"SPY{expiry_date.replace('-', '')[2:]}P{sell_strike_fmt:08d}",  # Fixed: strike * 1000
                 "expiration": expiry_date,
-                "strike": int(spy_price * 0.98),  # 2% OTM
+                "strike": sell_strike,  # Actual strike price (not * 1000)
                 "type": "PUT",  # Uppercase as per types.ts
                 "quantity": 1,
                 "side": "SELL"  # Sell to open (short leg)
             },
             # Long Put Leg (Buy lower strike for protection)
             {
-                "symbol": f"SPY{expiry_date.replace('-', '')[2:]}P{int(spy_price * 0.96):08d}",  # Mock option symbol
+                "symbol": f"SPY{expiry_date.replace('-', '')[2:]}P{buy_strike_fmt:08d}",  # Fixed: strike * 1000
                 "expiration": expiry_date,
-                "strike": int(spy_price * 0.96),  # 4% OTM (wider spread)
+                "strike": buy_strike,  # Actual strike price (not * 1000)
                 "type": "PUT",  # Uppercase as per types.ts
                 "quantity": 1,
                 "side": "BUY"  # Buy to open (long leg)

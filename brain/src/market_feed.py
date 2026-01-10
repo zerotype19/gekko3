@@ -512,6 +512,11 @@ class MarketFeed:
             sell_strike = int(current_price * 1.02)  # 2% OTM
             buy_strike = int(current_price * 1.04)   # 4% OTM
         
+        # CRITICAL FIX: Tradier/OCC requires strike * 1000 in option symbol
+        # Format: SYMBOL + YYMMDD + C/P + (STRIKE * 1000 padded to 8 digits)
+        sell_strike_fmt = int(sell_strike * 1000)  # Multiply by 1000 for OCC format
+        buy_strike_fmt = int(buy_strike * 1000)    # Multiply by 1000 for OCC format
+        
         # Calculate mock limit price (Net Credit for credit spreads)
         # In production, this should be calculated from actual option bid/ask spreads
         # For now: Use a conservative estimate (e.g., 0.5% of underlying price)
@@ -530,7 +535,7 @@ class MarketFeed:
             'price': round(mock_net_credit, 2),  # MANDATORY: Limit price (net credit for opens)
             'legs': [
                 {
-                    'symbol': f"{symbol}{expiration_date.strftime('%y%m%d')}{option_type_upper[0]}{sell_strike:08d}",
+                    'symbol': f"{symbol}{expiration_date.strftime('%y%m%d')}{option_type_upper[0]}{sell_strike_fmt:08d}",
                     'expiration': expiration_date.strftime('%Y-%m-%d'),
                     'strike': sell_strike,
                     'type': option_type_upper,  # Uppercase: PUT or CALL
@@ -538,7 +543,7 @@ class MarketFeed:
                     'side': 'SELL'
                 },
                 {
-                    'symbol': f"{symbol}{expiration_date.strftime('%y%m%d')}{option_type_upper[0]}{buy_strike:08d}",
+                    'symbol': f"{symbol}{expiration_date.strftime('%y%m%d')}{option_type_upper[0]}{buy_strike_fmt:08d}",
                     'expiration': expiration_date.strftime('%Y-%m-%d'),
                     'strike': buy_strike,
                     'type': option_type_upper,  # Uppercase: PUT or CALL

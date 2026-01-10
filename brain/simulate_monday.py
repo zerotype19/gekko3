@@ -178,6 +178,14 @@ async def simulate_market():
     if next_friday.weekday() != 4:  # If not Friday, go to next Friday
         next_friday += timedelta(days=7)
     
+    # Calculate strikes
+    sell_strike = int(current_price * 0.98)
+    buy_strike = int(current_price * 0.96)
+    
+    # CRITICAL FIX: Tradier/OCC requires strike * 1000 in option symbol
+    sell_strike_fmt = int(sell_strike * 1000)  # Multiply by 1000 for OCC format
+    buy_strike_fmt = int(buy_strike * 1000)    # Multiply by 1000 for OCC format
+    
     proposal = {
         "symbol": "SPY",
         "strategy": "CREDIT_SPREAD",
@@ -186,17 +194,17 @@ async def simulate_market():
         "price": 0.50,  # MANDATORY: Limit price (mock net credit)
         "legs": [
             {
-                "symbol": f"SPY{next_friday.strftime('%y%m%d')}P{int(current_price * 0.98):08d}",
+                "symbol": f"SPY{next_friday.strftime('%y%m%d')}P{sell_strike_fmt:08d}",  # Fixed: strike * 1000
                 "expiration": next_friday.strftime('%Y-%m-%d'),
-                "strike": int(current_price * 0.98),
+                "strike": sell_strike,  # Actual strike price (not * 1000)
                 "type": "PUT",
                 "quantity": 1,
                 "side": "SELL"
             },
             {
-                "symbol": f"SPY{next_friday.strftime('%y%m%d')}P{int(current_price * 0.96):08d}",
+                "symbol": f"SPY{next_friday.strftime('%y%m%d')}P{buy_strike_fmt:08d}",  # Fixed: strike * 1000
                 "expiration": next_friday.strftime('%Y-%m-%d'),
-                "strike": int(current_price * 0.96),
+                "strike": buy_strike,  # Actual strike price (not * 1000)
                 "type": "PUT",
                 "quantity": 1,
                 "side": "BUY"

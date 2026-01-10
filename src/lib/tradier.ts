@@ -109,6 +109,47 @@ export class TradierClient {
   }
 
   /**
+   * Get current positions from Tradier
+   * @returns Array of positions with symbol, quantity, cost_basis, date_acquired
+   */
+  async getPositions(): Promise<Array<{
+    symbol: string;
+    quantity: number;
+    cost_basis: number;
+    date_acquired: string;
+  }>> {
+    const data = await this.request<{
+      positions?: {
+        position?: unknown;
+      } | null;
+    }>(`/accounts/${this.accountId}/positions`);
+
+    // Handle null or empty positions
+    if (!data.positions || data.positions === null || data.positions === 'null') {
+      return [];
+    }
+
+    // Handle both array and single object responses
+    const posArray = Array.isArray(data.positions.position)
+      ? data.positions.position
+      : data.positions.position
+        ? [data.positions.position]
+        : [];
+
+    return posArray.map((p: {
+      symbol?: string;
+      quantity?: number;
+      cost_basis?: number;
+      date_acquired?: string;
+    }) => ({
+      symbol: p.symbol ?? '',
+      quantity: p.quantity ?? 0,
+      cost_basis: p.cost_basis ?? 0,
+      date_acquired: p.date_acquired ?? new Date().toISOString(),
+    })).filter(p => p.symbol && p.quantity !== 0); // Filter out empty positions
+  }
+
+  /**
    * Place an order (Supports Multileg)
    * @param orderPayload Tradier order payload
    * @returns Order ID and status

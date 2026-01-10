@@ -180,11 +180,65 @@ export class GatekeeperDO {
   }
 
   /**
+   * Sync account state from Tradier (Source of Truth)
+   * Updates positions table and equity cache from live broker data
+   * CRITICAL: Called before every proposal evaluation to ensure accurate position counts
+   */
+  async syncAccountState(): Promise<void> {
+    try {
+      // 1. Get Real Balances (update equity cache)
+      const balances = await this.tradierClient.getBalances();
+      const now = Date.now();
+      this.equityCache = { value: balances.total_equity, timestamp: now };
+      
+      // Set start of day equity baseline if missing
+      if (!this.startOfDayEquity) {
+        this.startOfDayEquity = balances.total_equity;
+      }
+
+      // 2. Get Real Positions from Tradier
+      const realPositions = await this.tradierClient.getPositions();
+
+      // 3. Update Database (Source of Truth is Broker, not DB)
+      // Clear stale cache - we trust Tradier's data, not our assumptions
+      await this.env.DB.prepare('DELETE FROM positions').run();
+
+      // Insert real positions if any exist
+      if (realPositions.length > 0) {
+        const stmt = this.env.DB.prepare(
+          `INSERT INTO positions (symbol, quantity, cost_basis, date_acquired, updated_at)
+           VALUES (?, ?, ?, ?, unixepoch('now'))`
+        );
+        
+        // Use batch for efficiency
+        const batch = realPositions.map(p => {
+          // Convert date_acquired string to timestamp if needed
+          const dateAcquired = p.date_acquired 
+            ? Math.floor(new Date(p.date_acquired).getTime() / 1000)
+            : Math.floor(Date.now() / 1000);
+          
+          return stmt.bind(p.symbol, p.quantity, p.cost_basis, dateAcquired);
+        });
+        
+        await this.env.DB.batch(batch);
+      }
+    } catch (error) {
+      // Log error but don't fail the proposal evaluation
+      // If sync fails, we'll use cached data (better than blocking trades)
+      console.error('Failed to sync account state from Tradier:', error);
+    }
+  }
+
+  /**
    * Evaluate a trade proposal against all risk rules
    */
   async evaluateProposal(proposal: TradeProposal, signature: string): Promise<ProposalEvaluation> {
     // Initialize state if needed
     await this.initializeState();
+
+    // CRITICAL: Sync account state BEFORE checking position limits
+    // This ensures we have accurate position counts from Tradier (source of truth)
+    await this.syncAccountState();
 
     const evaluatedAt = Date.now();
 
