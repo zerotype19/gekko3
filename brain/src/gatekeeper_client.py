@@ -80,14 +80,22 @@ class GatekeeperClient:
         if 'timestamp' not in proposal_dict:
             proposal_dict['timestamp'] = int(time.time() * 1000)  # milliseconds
         
-        # Validate required fields
-        required_fields = ['symbol', 'strategy', 'side', 'quantity', 'legs', 'context', 'signature']
+        # Validate required fields (price is now mandatory per new Gatekeeper requirements)
+        required_fields = ['symbol', 'strategy', 'side', 'quantity', 'price', 'legs', 'context', 'signature']
         missing_fields = [field for field in required_fields if field not in proposal_dict]
         if missing_fields and 'signature' not in missing_fields:
             # Signature will be added below, so only check others
             missing_fields = [f for f in missing_fields if f != 'signature']
             if missing_fields:
                 raise ValueError(f'Missing required fields: {missing_fields}')
+        
+        # Validate side is OPEN or CLOSE (not BUY/SELL)
+        if proposal_dict.get('side') not in ['OPEN', 'CLOSE']:
+            raise ValueError(f"Invalid side: {proposal_dict.get('side')}. Must be 'OPEN' or 'CLOSE'")
+        
+        # Validate price is positive
+        if 'price' in proposal_dict and (proposal_dict['price'] is None or proposal_dict['price'] <= 0):
+            raise ValueError(f"Invalid price: {proposal_dict.get('price')}. Price must be positive for limit orders")
 
         # For signing, we need to create the payload WITHOUT the signature field
         # Then sign it, then add the signature to both payload and header

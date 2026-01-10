@@ -417,7 +417,7 @@ class MarketFeed:
         if trend == 'UPTREND' and rsi < 30 and flow_state != 'NEUTRAL':
             signal = 'BULL_PUT_SPREAD'
             strategy = 'CREDIT_SPREAD'
-            side = 'SELL'
+            side = 'OPEN'  # OPEN = Enter new position
             option_type = 'PUT'
             bias = 'bullish'
         
@@ -425,7 +425,7 @@ class MarketFeed:
         elif trend == 'DOWNTREND' and rsi > 70 and flow_state != 'NEUTRAL':
             signal = 'BEAR_CALL_SPREAD'
             strategy = 'CREDIT_SPREAD'
-            side = 'SELL'
+            side = 'OPEN'  # OPEN = Enter new position
             option_type = 'CALL'
             bias = 'bearish'
         
@@ -512,26 +512,36 @@ class MarketFeed:
             sell_strike = int(current_price * 1.02)  # 2% OTM
             buy_strike = int(current_price * 1.04)   # 4% OTM
         
-        # Create proposal
+        # Calculate mock limit price (Net Credit for credit spreads)
+        # In production, this should be calculated from actual option bid/ask spreads
+        # For now: Use a conservative estimate (e.g., 0.5% of underlying price)
+        # This ensures we always have a limit price (required by Gatekeeper)
+        mock_net_credit = max(0.10, current_price * 0.005)  # Minimum $0.10, or 0.5% of price
+        
+        # Ensure option type is uppercase (PUT/CALL)
+        option_type_upper = option_type.upper()
+        
+        # Create proposal with mandatory price field
         proposal = {
             'symbol': symbol,
             'strategy': strategy,
-            'side': side,
+            'side': side,  # Now 'OPEN' or 'CLOSE' (not 'BUY'/'SELL')
             'quantity': 1,  # Default to 1 contract
+            'price': round(mock_net_credit, 2),  # MANDATORY: Limit price (net credit for opens)
             'legs': [
                 {
-                    'symbol': f"{symbol}{expiration_date.strftime('%y%m%d')}{option_type[0]}{sell_strike:08d}",
+                    'symbol': f"{symbol}{expiration_date.strftime('%y%m%d')}{option_type_upper[0]}{sell_strike:08d}",
                     'expiration': expiration_date.strftime('%Y-%m-%d'),
                     'strike': sell_strike,
-                    'type': option_type,
+                    'type': option_type_upper,  # Uppercase: PUT or CALL
                     'quantity': 1,
                     'side': 'SELL'
                 },
                 {
-                    'symbol': f"{symbol}{expiration_date.strftime('%y%m%d')}{option_type[0]}{buy_strike:08d}",
+                    'symbol': f"{symbol}{expiration_date.strftime('%y%m%d')}{option_type_upper[0]}{buy_strike:08d}",
                     'expiration': expiration_date.strftime('%Y-%m-%d'),
                     'strike': buy_strike,
-                    'type': option_type,
+                    'type': option_type_upper,  # Uppercase: PUT or CALL
                     'quantity': 1,
                     'side': 'BUY'
                 }
@@ -553,7 +563,7 @@ class MarketFeed:
         try:
             result = await self.gatekeeper_client.send_proposal(proposal)
             status = result.get('status')
-            logging.info(f"📤 Proposal sent to Gatekeeper: {status}")
+            logging.info(f"📤 Proposal sent to Gatekeeper: {status} | Side: {side} | Price: ${proposal['price']:.2f}")
             
             if status == 'REJECTED':
                 reason = result.get('reason', 'Unknown')

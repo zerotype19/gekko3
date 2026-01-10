@@ -181,8 +181,9 @@ async def simulate_market():
     proposal = {
         "symbol": "SPY",
         "strategy": "CREDIT_SPREAD",
-        "side": "SELL",
+        "side": "OPEN",  # OPEN = Enter new position (not SELL)
         "quantity": 1,
+        "price": 0.50,  # MANDATORY: Limit price (mock net credit)
         "legs": [
             {
                 "symbol": f"SPY{next_friday.strftime('%y%m%d')}P{int(current_price * 0.98):08d}",
@@ -216,6 +217,8 @@ async def simulate_market():
     print(f"   Sending test proposal to Gatekeeper...")
     print(f"   Symbol: {proposal['symbol']}")
     print(f"   Strategy: {proposal['strategy']}")
+    print(f"   Side: {proposal['side']} (OPEN = Enter position)")
+    print(f"   Price: ${proposal['price']} (Limit price - mandatory)")
     print(f"   VIX: {proposal['context']['vix']}")
     try:
         response = await client.send_proposal(proposal)

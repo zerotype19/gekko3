@@ -46,8 +46,9 @@ async def test_execution():
     proposal = {
         "symbol": "SPY",
         "strategy": "CREDIT_SPREAD",  # Correct enum from types.ts
-        "side": "SELL",  # Top-level side (SELL for credit spreads)
+        "side": "OPEN",  # OPEN = Enter new position (not SELL)
         "quantity": 1,  # 1 contract spread
+        "price": 0.50,  # MANDATORY: Limit price (net credit for credit spreads)
         "legs": [
             # Short Put Leg (Sell higher strike)
             {
@@ -83,7 +84,8 @@ async def test_execution():
     print(f"\n📦 Proposal Details:")
     print(f"   Symbol: {proposal['symbol']}")
     print(f"   Strategy: {proposal['strategy']}")
-    print(f"   Side: {proposal['side']}")
+    print(f"   Side: {proposal['side']} (OPEN = Enter position)")
+    print(f"   Price: ${proposal['price']} (Limit price - mandatory)")
     print(f"   Expiration: {expiry_date} (DTE: {days_until_friday} days)")
     print(f"   Legs: {len(proposal['legs'])}")
     for i, leg in enumerate(proposal['legs'], 1):
