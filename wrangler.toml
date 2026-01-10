@@ -1,0 +1,33 @@
+name = "gekko3-core"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[durable_objects]
+bindings = [
+  { name = "GATEKEEPER_DO", class_name = "GatekeeperDO" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["GatekeeperDO"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "gekko3-ledger"
+database_id = "df2c1409-2376-4075-83ba-3e9fe6fe5ac3"
+
+[env.production]
+vars = { ENV = "production" }
+
+[env.staging]
+vars = { ENV = "staging" }
+
+# Secrets (set via: wrangler secret put <NAME>)
+# TRADIER_ACCESS_TOKEN
+# TRADIER_ACCOUNT_ID
+# API_SECRET
+
+# Cron triggers for EOD enforcement (uncomment to enable)
+# [[triggers.crons]]
+# cron = "*/5 * * * *"  # Every 5 minutes (adjust as needed for EOD checks)
+
