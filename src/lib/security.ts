@@ -6,6 +6,29 @@
 import type { Env } from '../config';
 
 /**
+ * Recursively sort object keys to ensure canonical JSON representation.
+ * Matches Python's json.dumps(sort_keys=True) behavior.
+ */
+function recursiveSort(obj: unknown): unknown {
+  if (obj === null || typeof obj !== 'object') {
+    return obj;
+  }
+  // Preserve array order, but sort objects inside arrays
+  if (Array.isArray(obj)) {
+    return obj.map(recursiveSort);
+  }
+  
+  // Sort object keys
+  const sorted: Record<string, unknown> = {};
+  Object.keys(obj as Record<string, unknown>)
+    .sort()
+    .forEach(key => {
+      sorted[key] = recursiveSort((obj as Record<string, unknown>)[key]);
+    });
+  return sorted;
+}
+
+/**
  * Verify HMAC signature
  * Implements proper HMAC-SHA256 verification with constant-time comparison
  */
@@ -22,13 +45,10 @@ export async function verifySignature(
   const payloadForSigning = { ...proposal };
   delete payloadForSigning.signature;
   
-  // Create canonical JSON string (sorted keys, no spaces - matching Python's json.dumps with sort_keys=True, separators=(',', ':'))
-  // Sort keys by creating a new object with sorted keys
-  const sortedKeys = Object.keys(payloadForSigning).sort();
-  const sortedPayload: Record<string, unknown> = {};
-  for (const key of sortedKeys) {
-    sortedPayload[key] = payloadForSigning[key];
-  }
+  // Recursively sort keys to match Python's canonical form
+  const sortedPayload = recursiveSort(payloadForSigning);
+  
+  // Stringify (standard JSON.stringify removes whitespace, matching Python separators)
   const payloadJson = JSON.stringify(sortedPayload);
 
   // Compute HMAC-SHA256

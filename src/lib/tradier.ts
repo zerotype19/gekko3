@@ -37,6 +37,11 @@ export class TradierClient {
    */
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const url = `${TRADIER_API_BASE}${endpoint}`;
+    const method = options.method || 'GET';
+    
+    // Log outgoing request
+    console.log(`[Tradier] Req: ${method} ${endpoint}`);
+
     const response = await fetch(url, {
       ...options,
       headers: {
@@ -47,6 +52,8 @@ export class TradierClient {
 
     if (!response.ok) {
       const errorText = await response.text();
+      // Log full error detail
+      console.error(`[Tradier] Error ${response.status} on ${method} ${endpoint}:`, errorText);
       throw new Error(`Tradier API error (${response.status}): ${errorText}`);
     }
 
