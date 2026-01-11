@@ -141,6 +141,12 @@ class BrainSupervisor:
                             logging.error(f"❌ Feed crashed: {e}. Restarting...")
                             self.feed_task = asyncio.create_task(self.market_feed.connect())
                 
+                # Send heartbeat every minute (indicates Brain is alive)
+                try:
+                    await self.gatekeeper.send_heartbeat()
+                except Exception as e:
+                    logging.debug(f"Heartbeat failed (non-critical): {e}")
+                
                 # Pulse check every minute during market hours (with shutdown checks)
                 if not self.running:
                     break

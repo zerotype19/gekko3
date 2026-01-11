@@ -106,5 +106,6 @@ export interface SystemStatus {
   dailyPnL: number;
   equity?: number;
   lastUpdated: number;
+  lastHeartbeat?: number; // Timestamp of last heartbeat from Brain (0 if never received)
 }
 

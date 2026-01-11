@@ -45,6 +45,7 @@ export class GatekeeperDO {
   private startOfDayEquity?: number;
   private equityCache: { value: number; timestamp: number } | null = null;
   private EQUITY_CACHE_TTL_MS = 60000; // Cache equity for 1 minute
+  private lastHeartbeat: number = 0; // Timestamp of last heartbeat from Brain
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -640,6 +641,16 @@ export class GatekeeperDO {
   /**
    * Get system status
    */
+  /**
+   * Receive heartbeat from Brain (indicates Brain is alive)
+   */
+  async receiveHeartbeat(): Promise<Response> {
+    this.lastHeartbeat = Date.now();
+    return new Response(JSON.stringify({ status: 'OK' }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
   async getStatus(): Promise<SystemStatus> {
     await this.initializeState();
 
@@ -654,6 +665,7 @@ export class GatekeeperDO {
       dailyPnL: -dailyPnL, // Convert loss to PnL (negative of loss)
       equity,
       lastUpdated: Date.now(),
+      lastHeartbeat: this.lastHeartbeat,
     };
   }
 
@@ -704,6 +716,11 @@ export class GatekeeperDO {
       return new Response(JSON.stringify(status), {
         headers: { 'Content-Type': 'application/json' },
       });
+    }
+
+    // Handle heartbeat from Brain
+    if (path === '/heartbeat' && request.method === 'POST') {
+      return this.receiveHeartbeat();
     }
 
     // Handle alarm trigger (for scheduled events)

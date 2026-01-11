@@ -218,6 +218,47 @@ class GatekeeperClient:
                         'http_status': response.status
                     }
         finally:
+            # Only close session if we created it
+            if not use_external_session:
+                await session.close()
+
+    async def send_heartbeat(self, session: Optional[aiohttp.ClientSession] = None) -> Dict[str, Any]:
+        """
+        Send heartbeat to Gatekeeper (indicates Brain is alive)
+        
+        Args:
+            session: Optional aiohttp session (creates new one if not provided)
+            
+        Returns:
+            Response dictionary with status
+            
+        Raises:
+            aiohttp.ClientError: On network errors
+        """
+        url = f'{self.base_url}/v1/heartbeat'
+        
+        use_external_session = session is not None
+        if not use_external_session:
+            session = aiohttp.ClientSession()
+        
+        try:
+            async with session.post(url, json={}) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return {
+                        'status': 'OK',
+                        'data': data,
+                        'http_status': response.status
+                    }
+                else:
+                    error_text = await response.text()
+                    return {
+                        'status': 'ERROR',
+                        'error': error_text,
+                        'http_status': response.status
+                    }
+        finally:
+            # Only close session if we created it
             if not use_external_session:
                 await session.close()
 
