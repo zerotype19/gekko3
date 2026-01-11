@@ -123,11 +123,17 @@ export class TradierClient {
     }
 
     // Log the constructed body for debugging Cloudflare logs
-    console.log(`[Tradier] Order Body: ${body.toString()}`);
+    const bodyString = body.toString();
+    console.log(`[Tradier] Order Body: ${bodyString}`);
 
+    // CRITICAL FIX: Convert URLSearchParams to string and explicitly set Content-Type
+    // This matches the working gekkoworks2 implementation
     const data = await this.request<{ order?: { id?: number; status?: string; }; }>(`/accounts/${this.accountId}/orders`, {
       method: 'POST',
-      body: body,
+      body: bodyString,
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
     });
 
     const order = data.order;
