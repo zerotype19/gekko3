@@ -732,6 +732,135 @@ export class GatekeeperDO {
   }
 
   /**
+   * Generate and send End-of-Day P&L Report to Discord
+   */
+  async generateEndOfDayReport(): Promise<void> {
+    try {
+      // Ensure state is initialized
+      await this.initializeState();
+
+      // 1. Fetch Current Balances
+      const balances = await this.tradierClient.getBalances();
+      const currentEquity = balances.total_equity;
+
+      // 2. Get or initialize Start of Day Equity
+      // Check if we have start of day equity stored (from Durable Object storage)
+      const startOfDayKey = 'startOfDayEquity';
+      const startOfDayTimestampKey = 'startOfDayTimestamp';
+      
+      const storedStartEquity = await this.state.storage.get<number>(startOfDayKey);
+      const storedTimestamp = await this.state.storage.get<number>(startOfDayTimestampKey);
+
+      // Get today's date in ET (UTC-5 or UTC-4 depending on DST)
+      // For simplicity, we'll use UTC date and check if stored timestamp is from today
+      const now = Date.now();
+      const oneDayMs = 24 * 60 * 60 * 1000;
+      const todayStartMs = now - (now % oneDayMs); // Start of today in UTC
+
+      let startOfDayEquity = storedStartEquity;
+      if (!startOfDayEquity || !storedTimestamp || storedTimestamp < todayStartMs) {
+        // No stored equity or it's stale - use current equity as baseline
+        // This means P&L will be 0 for today (first run of the day)
+        startOfDayEquity = currentEquity;
+        await this.state.storage.put(startOfDayKey, startOfDayEquity);
+        await this.state.storage.put(startOfDayTimestampKey, now);
+      }
+
+      // Update instance variable for consistency
+      this.startOfDayEquity = startOfDayEquity;
+
+      // 3. Calculate Day P&L
+      const dayPnLDollars = currentEquity - startOfDayEquity;
+      const dayPnLPercent = startOfDayEquity > 0 
+        ? (dayPnLDollars / startOfDayEquity) * 100 
+        : 0;
+
+      // 4. Query Today's Trade Activity from Proposals Table
+      // Calculate start of today in UTC (simplified - ET would be better but requires timezone lib)
+      const todayStartSeconds = Math.floor(todayStartMs / 1000);
+      
+      const todayProposals = await this.env.DB.prepare(
+        'SELECT status, COUNT(*) as count FROM proposals WHERE timestamp >= ? GROUP BY status'
+      )
+        .bind(todayStartSeconds)
+        .all<{ status: 'APPROVED' | 'REJECTED'; count: number }>();
+
+      const approvedCount = todayProposals.results?.find(r => r.status === 'APPROVED')?.count ?? 0;
+      const rejectedCount = todayProposals.results?.find(r => r.status === 'REJECTED')?.count ?? 0;
+      const totalTrades = approvedCount + rejectedCount;
+
+      // Calculate "Approval Rate" as a proxy for performance
+      // (Actual win rate would require realized P&L per trade, which we don't track yet)
+      const approvalRate = totalTrades > 0 ? (approvedCount / totalTrades) * 100 : 0;
+
+      // 5. Format Discord Message
+      const color = dayPnLDollars >= 0 ? 0x22c55e : 0xef4444; // Green if profit, Red if loss
+      const pnlSign = dayPnLDollars >= 0 ? '+' : '';
+      
+      const embed = {
+        title: '📅 Gekko3 Daily Report',
+        color: color,
+        fields: [
+          {
+            name: 'Starting Equity',
+            value: `$${startOfDayEquity.toFixed(2)}`,
+            inline: true,
+          },
+          {
+            name: 'Ending Equity',
+            value: `$${currentEquity.toFixed(2)}`,
+            inline: true,
+          },
+          {
+            name: 'Net Profit/Loss',
+            value: `${pnlSign}$${dayPnLDollars.toFixed(2)} (${pnlSign}${dayPnLPercent.toFixed(2)}%)`,
+            inline: false,
+          },
+          {
+            name: 'Trades Taken',
+            value: `${approvedCount} approved / ${totalTrades} total`,
+            inline: true,
+          },
+          {
+            name: 'Approval Rate',
+            value: `${approvalRate.toFixed(1)}%`,
+            inline: true,
+          },
+        ],
+        timestamp: new Date().toISOString(),
+      };
+
+      const payload = {
+        embeds: [embed],
+      };
+
+      // 6. Send to Discord (if webhook URL is configured)
+      if (!this.env.DISCORD_WEBHOOK_URL) {
+        console.log('Discord webhook not configured - skipping EOD report');
+        return;
+      }
+
+      const response = await fetch(this.env.DISCORD_WEBHOOK_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`Failed to send EOD report to Discord: ${response.status} - ${errorText}`);
+      } else {
+        console.log('✅ EOD report sent to Discord successfully');
+      }
+    } catch (error) {
+      console.error('Error generating EOD report:', error);
+      // Don't throw - this is a passive reporting task, shouldn't break the system
+    }
+  }
+
+  /**
    * Fetch handler (entry point for requests)
    */
   async fetch(request: Request): Promise<Response> {
@@ -770,6 +899,15 @@ export class GatekeeperDO {
     if (path === '/alarm' && request.method === 'POST') {
       await this.alarm();
       return new Response(JSON.stringify({ status: 'alarm_triggered' }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Handle EOD report trigger (from scheduled cron)
+    if (path === '/scheduler/eod-report') {
+      // This is an internal route, so we don't need to check method
+      await this.generateEndOfDayReport();
+      return new Response(JSON.stringify({ status: 'eod_report_generated' }), {
         headers: { 'Content-Type': 'application/json' },
       });
     }

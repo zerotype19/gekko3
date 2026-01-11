@@ -389,17 +389,16 @@ export default {
 
   /**
    * Scheduled event handler (cron trigger)
-   * Runs EOD enforcement checks
-   * Configure cron in wrangler.toml (see wrangler.toml comments for cron syntax)
+   * Runs EOD reporting at 4:30 PM ET (21:30 UTC)
+   * Configure cron in wrangler.toml
    */
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     const stub = getGatekeeperDO(env);
     
-    // Trigger EOD check by calling the alarm endpoint
-    // The DO's alarm() method will call enforceEOD()
+    // Route to EOD report generation
     ctx.waitUntil(
-      stub.fetch(new Request('http://do-singleton/alarm', { method: 'POST' })).catch((error) => {
-        console.error('Scheduled event error:', error);
+      stub.fetch(new Request('http://internal/scheduler/eod-report', { method: 'POST' })).catch((error) => {
+        console.error('Scheduled EOD report error:', error);
       })
     );
   },

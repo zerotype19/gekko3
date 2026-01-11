@@ -35,6 +35,7 @@ export interface Env {
   TRADIER_ACCESS_TOKEN: string;
   TRADIER_ACCOUNT_ID: string;
   API_SECRET: string;
+  DISCORD_WEBHOOK_URL?: string; // Optional: Discord webhook for EOD reports
 
   // Environment
   ENV?: 'production' | 'staging' | 'development';

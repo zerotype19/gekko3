@@ -27,7 +27,9 @@ vars = { ENV = "staging" }
 # TRADIER_ACCOUNT_ID
 # API_SECRET
 
-# Cron triggers for EOD enforcement (uncomment to enable)
-# [[triggers.crons]]
-# cron = "*/5 * * * *"  # Every 5 minutes (adjust as needed for EOD checks)
+# Cron triggers for EOD reporting
+[triggers]
+crons = ["30 21 * * 1-5"]  # 4:30 PM ET (21:30 UTC) every weekday (Monday-Friday)
+# Note: Adjust for Daylight Savings Time (EDT = UTC-4, EST = UTC-5)
+# Current: 21:30 UTC = 4:30 PM EST / 5:30 PM EDT
 
