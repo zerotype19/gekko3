@@ -13,14 +13,14 @@ export const CONSTITUTION: RiskConfig = {
   // Strategy: Only credit spreads are permitted
   allowedStrategies: ['CREDIT_SPREAD'] as const,
 
-  // Risk Limits
-  maxOpenPositions: 4, // Maximum total open positions
-  maxConcentrationPerSymbol: 2, // Maximum positions per symbol
-  maxDailyLossPercent: 0.02, // Lock system if NAV drops 2%
+  // Risk Limits (INCREASED FOR TESTING)
+  maxOpenPositions: 8,          // Was 4. Increased to allow more concurrent tests.
+  maxConcentrationPerSymbol: 4, // Was 2. Increased to allow multiple tests on SPY.
+  maxDailyLossPercent: 0.02,    // Keeps 2% hard stop (Safety First).
 
   // Execution Constraints
-  staleProposalMs: 10000, // Reject orders older than 10 seconds
-  forceEodCloseEt: '15:45', // Hard close at 3:45 PM ET (before market close)
+  staleProposalMs: 10000,       // Reject orders older than 10 seconds
+  forceEodCloseEt: '15:45',     // Hard close at 3:45 PM ET
 };
 
 /**
@@ -53,4 +53,3 @@ export function isAllowedSymbol(symbol: string): boolean {
 export function isAllowedStrategy(strategy: string): boolean {
   return CONSTITUTION.allowedStrategies.includes(strategy as any);
 }
-
