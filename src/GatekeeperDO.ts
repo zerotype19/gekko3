@@ -658,6 +658,42 @@ export class GatekeeperDO {
     const dailyPnL = await this.getDailyLossPercent();
     const positionsCount = await this.getOpenPositionsCount();
 
+    // 1. Fetch Active Positions
+    const positionsResult = await this.env.DB.prepare(
+      'SELECT symbol, quantity, cost_basis FROM positions WHERE quantity != 0 ORDER BY symbol ASC'
+    ).all<{ symbol: string; quantity: number; cost_basis: number }>();
+
+    const activePositions = (positionsResult.results || []).map((p: { symbol: string; quantity: number; cost_basis: number }) => ({
+      symbol: p.symbol,
+      quantity: p.quantity,
+      cost_basis: p.cost_basis,
+    }));
+
+    // 2. Fetch Recent Proposals (Last 10, most recent first)
+    type ProposalRow = {
+      id: string;
+      timestamp: number;
+      symbol: string;
+      strategy: string;
+      side: string;
+      status: 'APPROVED' | 'REJECTED';
+      rejection_reason: string | null;
+    };
+    
+    const proposalsResult = await this.env.DB.prepare(
+      'SELECT id, timestamp, symbol, strategy, side, status, rejection_reason FROM proposals ORDER BY timestamp DESC LIMIT 10'
+    ).all<ProposalRow>();
+
+    const recentProposals = (proposalsResult.results || []).map((p: ProposalRow) => ({
+      id: p.id,
+      timestamp: p.timestamp, // Already in seconds from DB
+      symbol: p.symbol,
+      strategy: p.strategy,
+      side: p.side,
+      status: p.status,
+      rejectionReason: p.rejection_reason,
+    }));
+
     return {
       status: this.systemLocked ? 'LOCKED' : 'NORMAL',
       lockReason: this.lockReason,
@@ -666,6 +702,8 @@ export class GatekeeperDO {
       equity,
       lastUpdated: Date.now(),
       lastHeartbeat: this.lastHeartbeat,
+      activePositions,
+      recentProposals,
     };
   }
 

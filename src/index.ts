@@ -34,6 +34,11 @@ const UI_HTML = `<!DOCTYPE html>
         .btn-lock:hover, .btn-unlock:hover { opacity: 0.9; }
         .hidden { display: none; }
         .lock-reason { margin-top: 10px; padding: 10px; background: rgba(239, 68, 68, 0.1); border-radius: 6px; font-size: 0.875rem; }
+        .log-box { background: #000; padding: 10px; border-radius: 8px; font-family: monospace; font-size: 0.8rem; height: 200px; overflow-y: auto; color: #0f0; }
+        table { width: 100%; border-collapse: collapse; }
+        th { text-align: left; opacity: 0.6; border-bottom: 1px solid #333; padding: 8px 0; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+        td { padding: 8px 0; border-bottom: 1px solid #222; }
+        h3 { margin-top: 0; margin-bottom: 10px; }
     </style>
 </head>
 <body>
@@ -71,6 +76,20 @@ const UI_HTML = `<!DOCTYPE html>
                 <button id="btnUnlock" class="btn-unlock hidden" onclick="toggleLock(false)">🔓 UNLOCK SYSTEM</button>
             </div>
             <p style="font-size: 0.8rem; opacity: 0.6; margin-top: 10px;">Locking prevents all new trades immediately.</p>
+        </div>
+
+        <div class="card">
+            <h3>Active Positions</h3>
+            <div id="positionsList" style="margin-top: 10px; font-size: 0.9rem;">
+                <div style="opacity: 0.5; font-style: italic;">No active positions</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>Recent Activity (Brain Log)</h3>
+            <div class="log-box" id="activityLog">
+                <div>Loading...</div>
+            </div>
         </div>
     </div>
 
@@ -128,6 +147,46 @@ const UI_HTML = `<!DOCTYPE html>
                 } else {
                     hbEl.textContent = '🔴 Offline';
                     hbEl.style.color = 'var(--red)';
+                }
+
+                // RENDER POSITIONS
+                const posContainer = document.getElementById('positionsList');
+                if (data.activePositions && data.activePositions.length > 0) {
+                    posContainer.innerHTML = \`<table>
+                        <tr><th>Symbol</th><th>Quantity</th><th>Cost Basis</th></tr>
+                        \${data.activePositions.map(p => \`
+                            <tr>
+                                <td style="font-weight: bold; color: var(--blue);">\${p.symbol}</td>
+                                <td>\${p.quantity}</td>
+                                <td>$\\${p.cost_basis.toFixed(2)}</td>
+                            </tr>
+                        \`).join('')}
+                    </table>\`;
+                } else {
+                    posContainer.innerHTML = '<div style="opacity: 0.5; font-style: italic;">No active positions</div>';
+                }
+
+                // RENDER ACTIVITY LOG
+                const logContainer = document.getElementById('activityLog');
+                if (data.recentProposals && data.recentProposals.length > 0) {
+                    logContainer.innerHTML = data.recentProposals.map(p => {
+                        // Format timestamp (stored as seconds, convert to ms for JS Date)
+                        const date = new Date(p.timestamp * 1000);
+                        const time = date.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+                        
+                        const statusColor = p.status === 'APPROVED' ? 'var(--green)' : 'var(--red)';
+                        const reason = p.rejectionReason ? \` <span style="opacity: 0.6;">- \${p.rejectionReason}</span>\` : '';
+                        
+                        return \`<div style="margin-bottom: 6px; border-bottom: 1px solid #222; padding-bottom: 4px;">
+                            <span style="opacity: 0.5; margin-right: 8px;">[\${time}]</span>
+                            <span style="font-weight: bold; color: var(--text);">\${p.symbol}</span>
+                            <span style="font-size: 0.85em; opacity: 0.8; margin: 0 5px;">\${p.side}</span>
+                            <span style="font-weight: bold; color: \${statusColor};">\${p.status}</span>
+                            \${reason}
+                        </div>\`;
+                    }).join('');
+                } else {
+                    logContainer.innerHTML = '<div style="opacity: 0.5; font-style: italic;">No recent activity</div>';
                 }
 
             } catch (e) {

@@ -107,5 +107,19 @@ export interface SystemStatus {
   equity?: number;
   lastUpdated: number;
   lastHeartbeat?: number; // Timestamp of last heartbeat from Brain (0 if never received)
+  activePositions: Array<{
+    symbol: string;
+    quantity: number;
+    cost_basis: number;
+  }>;
+  recentProposals: Array<{
+    id: string;
+    timestamp: number; // Unix timestamp in seconds (from DB)
+    symbol: string;
+    strategy: string;
+    side: string;
+    status: 'APPROVED' | 'REJECTED';
+    rejectionReason?: string | null;
+  }>;
 }
 
