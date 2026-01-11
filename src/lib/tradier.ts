@@ -85,7 +85,7 @@ export class TradierClient {
   async placeOrder(orderPayload: {
     class: 'option' | 'equity' | 'multileg'; 
     symbol: string;
-    type: 'market' | 'limit';
+    type: 'market' | 'limit' | 'credit' | 'debit' | 'even';
     duration: 'day' | 'gtc';
     price?: number;
     option_symbol?: string;

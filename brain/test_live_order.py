@@ -83,12 +83,9 @@ async def test_live_order():
         }
     }
 
-    print(f"📦 Sending Proposal...")
-    print(f"   Symbol: {proposal['symbol']}")
-    print(f"   Strategy: {proposal['strategy']}")
-    print(f"   Side: {proposal['side']}")
-    print(f"   Price: ${proposal['price']} (Limit)")
-    print()
+    print(f"📦 Sending Proposal (Raw JSON):")
+    print(json.dumps(proposal, indent=2))
+    print("-" * 60)
     
     try:
         # 4. Fire!
