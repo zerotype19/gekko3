@@ -54,6 +54,19 @@ class GatekeeperClient:
         ).hexdigest()
         return signature
 
+    def _sanitize_payload(self, data: Any) -> Any:
+        """
+        Recursively convert floats that are integers to ints to match JS JSON.stringify behavior.
+        E.g. 15.0 -> 15. This ensures the stringified payload matches between Python and Node.js.
+        """
+        if isinstance(data, dict):
+            return {k: self._sanitize_payload(v) for k, v in data.items()}
+        elif isinstance(data, list):
+            return [self._sanitize_payload(v) for v in data]
+        elif isinstance(data, float) and data.is_integer():
+            return int(data)
+        return data
+
     async def send_proposal(
         self,
         proposal_dict: Dict[str, Any],
@@ -182,15 +195,6 @@ class GatekeeperClient:
     async def get_status(self, session: Optional[aiohttp.ClientSession] = None) -> Dict[str, Any]:
         """
         Get current Gatekeeper system status
-        
-        Args:
-            session: Optional aiohttp session (creates new one if not provided)
-            
-        Returns:
-            Status dictionary with system state, positions, equity, etc.
-            
-        Raises:
-            aiohttp.ClientError: On network errors
         """
         url = f'{self.base_url}/v1/status'
         
@@ -221,7 +225,6 @@ class GatekeeperClient:
                         'http_status': response.status
                     }
         finally:
-            # Only close session if we created it
             if not use_external_session:
                 await session.close()
 
@@ -264,4 +267,3 @@ class GatekeeperClient:
             # Only close session if we created it
             if not use_external_session:
                 await session.close()
-
