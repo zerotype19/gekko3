@@ -84,14 +84,27 @@ export class TradierClient {
   }
 
   async getBalances(): Promise<{ total_equity: number; buying_power: number; day_buying_power: number; cash?: { cash?: number }; }> {
-    const data = await this.request<{ accounts?: { account?: { total_equity?: number; buying_power?: number; day_buying_power?: number; cash?: { cash?: number }; }; }; }>(`/accounts/${this.accountId}/balances`);
-    const account = data.accounts?.account;
-    if (!account) throw new Error('No account data returned from Tradier');
+    // FIX: The endpoint returns { "balances": { ... } }, NOT { "accounts": { "account": ... } }
+    const data = await this.request<{
+      balances?: {
+        total_equity?: number;
+        buying_power?: number;
+        day_buying_power?: number;
+        total_cash?: number; // Tradier uses 'total_cash' directly in balances
+        cash?: { cash?: number };
+      };
+    }>(`/accounts/${this.accountId}/balances`);
+    
+    const balances = data.balances;
+    if (!balances) {
+      throw new Error('No account data returned from Tradier');
+    }
+
     return {
-      total_equity: account.total_equity ?? 0,
-      buying_power: account.buying_power ?? 0,
-      day_buying_power: account.day_buying_power ?? 0,
-      cash: account.cash,
+      total_equity: balances.total_equity ?? 0,
+      buying_power: balances.buying_power ?? 0,
+      day_buying_power: balances.day_buying_power ?? 0,
+      cash: balances.cash,
     };
   }
 
