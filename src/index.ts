@@ -158,7 +158,7 @@ const UI_HTML = `<!DOCTYPE html>
                             <tr>
                                 <td style="font-weight: bold; color: var(--blue);">\${p.symbol}</td>
                                 <td>\${p.quantity}</td>
-                                <td>$\\${p.cost_basis.toFixed(2)}</td>
+                                <td>\${'$' + p.cost_basis.toFixed(2)}</td>
                             </tr>
                         \`).join('')}
                     </table>\`;
