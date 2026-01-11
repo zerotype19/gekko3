@@ -480,10 +480,15 @@ export class GatekeeperDO {
             }
           }
 
+          // CRITICAL FIX: Determine Order Type for Multileg
+          // Entry (OPEN) = We want a Net Credit -> type: 'credit'
+          // Exit (CLOSE) = We pay a Net Debit -> type: 'debit'
+          const orderType = proposal.side === 'OPEN' ? 'credit' : 'debit';
+
           orderResult = await this.tradierClient.placeOrder({
             class: 'multileg',
             symbol: proposal.symbol,
-            type: 'limit', // ALWAYS LIMIT
+            type: orderType, // Dynamic: 'credit' for OPEN, 'debit' for CLOSE
             price: proposal.price, // Mandatory limit price
             duration: 'day',
             'option_symbol[]': optionSymbols,
