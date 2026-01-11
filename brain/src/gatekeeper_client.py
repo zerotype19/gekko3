@@ -97,6 +97,9 @@ class GatekeeperClient:
         if 'price' in proposal_dict and (proposal_dict['price'] is None or proposal_dict['price'] <= 0):
             raise ValueError(f"Invalid price: {proposal_dict.get('price')}. Price must be positive for limit orders")
 
+        # Sanitize data types (fix floats) BEFORE signing to match JS behavior
+        proposal_dict = self._sanitize_payload(proposal_dict)
+
         # For signing, we need to create the payload WITHOUT the signature field
         # Then sign it, then add the signature to both payload and header
         proposal_for_signing = proposal_dict.copy()
