@@ -28,6 +28,11 @@ export class TradierClient {
     
     // Log outgoing request
     console.log(`[Tradier] Req: ${method} ${endpoint}`);
+    
+    // Log request body if present (for POST requests)
+    if (options.body && method === 'POST') {
+      console.log(`[Tradier] Request body: ${options.body}`);
+    }
 
     const response = await fetch(url, {
       ...options,
@@ -39,9 +44,29 @@ export class TradierClient {
 
     if (!response.ok) {
       const errorText = await response.text();
-      // Log full error detail
-      console.error(`[Tradier] Error ${response.status} on ${method} ${endpoint}:`, errorText);
-      throw new Error(`Tradier API error (${response.status}): ${errorText}`);
+      // Enhanced error logging - try to parse JSON error if available
+      let errorDetails = errorText;
+      try {
+        const errorJson = JSON.parse(errorText);
+        if (errorJson.errors) {
+          errorDetails = JSON.stringify(errorJson.errors, null, 2);
+        } else if (errorJson.error) {
+          errorDetails = errorJson.error;
+        } else {
+          errorDetails = JSON.stringify(errorJson, null, 2);
+        }
+      } catch {
+        // Not JSON, use text as-is
+      }
+      
+      // Log full error detail with enhanced information
+      console.error(`[Tradier] Error ${response.status} on ${method} ${endpoint}:`);
+      console.error(`[Tradier] Error details: ${errorDetails}`);
+      if (options.body && method === 'POST') {
+        console.error(`[Tradier] Request that failed: ${options.body}`);
+      }
+      
+      throw new Error(`Tradier API error (${response.status}): ${errorDetails}`);
     }
 
     const data = await response.json() as { [key: string]: unknown };
@@ -103,7 +128,11 @@ export class TradierClient {
     body.append('type', orderPayload.type);
     body.append('duration', orderPayload.duration);
     
-    if (orderPayload.price !== undefined) {
+    // CRITICAL: For multileg orders, price should only be added for limit orders (credit/debit)
+    // Market orders should NOT include price parameter
+    // Note: In gekkoworks2, they check orderType === 'limit' before adding price
+    // Since we're using 'credit'/'debit' types (which are limit orders), we always add price
+    if (orderPayload.price !== undefined && orderPayload.type !== 'market') {
       body.append('price', orderPayload.price.toFixed(2));
     }
 
