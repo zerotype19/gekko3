@@ -4,15 +4,20 @@
 
 import type { Env } from '../config';
 
-const TRADIER_API_BASE = 'https://sandbox.tradier.com/v1';
+const SANDBOX_API_BASE = 'https://sandbox.tradier.com/v1';
+const PRODUCTION_API_BASE = 'https://api.tradier.com/v1';
 
 export class TradierClient {
   private accessToken: string;
   private accountId: string;
+  private baseUrl: string;
 
-  constructor(accessToken: string, accountId: string) {
+  constructor(accessToken: string, accountId: string, isProduction: boolean = false) {
     this.accessToken = accessToken;
     this.accountId = accountId;
+    this.baseUrl = isProduction ? PRODUCTION_API_BASE : SANDBOX_API_BASE;
+    
+    console.log(`[Tradier] Initialized in ${isProduction ? 'PRODUCTION' : 'SANDBOX'} mode`);
   }
 
   private getHeaders(): HeadersInit {
@@ -23,17 +28,11 @@ export class TradierClient {
   }
 
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const url = `${TRADIER_API_BASE}${endpoint}`;
+    const url = `${this.baseUrl}${endpoint}`;
     const method = options.method || 'GET';
     
-    // Log outgoing request
     console.log(`[Tradier] Req: ${method} ${endpoint}`);
     
-    // Log request body if present (for POST requests)
-    if (options.body && method === 'POST') {
-      console.log(`[Tradier] Request body: ${options.body}`);
-    }
-
     const response = await fetch(url, {
       ...options,
       headers: {
@@ -59,13 +58,7 @@ export class TradierClient {
         // Not JSON, use text as-is
       }
       
-      // Log full error detail with enhanced information
-      console.error(`[Tradier] Error ${response.status} on ${method} ${endpoint}:`);
-      console.error(`[Tradier] Error details: ${errorDetails}`);
-      if (options.body && method === 'POST') {
-        console.error(`[Tradier] Request that failed: ${options.body}`);
-      }
-      
+      console.error(`[Tradier] Error ${response.status} on ${method} ${endpoint}:`, errorDetails);
       throw new Error(`Tradier API error (${response.status}): ${errorDetails}`);
     }
 
@@ -84,22 +77,9 @@ export class TradierClient {
   }
 
   async getBalances(): Promise<{ total_equity: number; buying_power: number; day_buying_power: number; cash?: { cash?: number }; }> {
-    // FIX: The endpoint returns { "balances": { ... } }, NOT { "accounts": { "account": ... } }
-    const data = await this.request<{
-      balances?: {
-        total_equity?: number;
-        buying_power?: number;
-        day_buying_power?: number;
-        total_cash?: number; // Tradier uses 'total_cash' directly in balances
-        cash?: { cash?: number };
-      };
-    }>(`/accounts/${this.accountId}/balances`);
-    
+    const data = await this.request<{ balances?: { total_equity?: number; buying_power?: number; day_buying_power?: number; cash?: { cash?: number }; }; }>(`/accounts/${this.accountId}/balances`);
     const balances = data.balances;
-    if (!balances) {
-      throw new Error('No account data returned from Tradier');
-    }
-
+    if (!balances) throw new Error('No account data returned from Tradier');
     return {
       total_equity: balances.total_equity ?? 0,
       buying_power: balances.buying_power ?? 0,
@@ -117,7 +97,7 @@ export class TradierClient {
       quantity: p.quantity,
       cost_basis: p.cost_basis,
       date_acquired: p.date_acquired
-    }));
+    })).filter((p: any) => p.symbol && p.quantity !== 0);
   }
 
   async placeOrder(orderPayload: {
@@ -141,11 +121,7 @@ export class TradierClient {
     body.append('type', orderPayload.type);
     body.append('duration', orderPayload.duration);
     
-    // CRITICAL: For multileg orders, price should only be added for limit orders (credit/debit)
-    // Market orders should NOT include price parameter
-    // Note: In gekkoworks2, they check orderType === 'limit' before adding price
-    // Since we're using 'credit'/'debit' types (which are limit orders), we always add price
-    if (orderPayload.price !== undefined && orderPayload.type !== 'market') {
+    if (orderPayload.price !== undefined) {
       body.append('price', orderPayload.price.toFixed(2));
     }
 
@@ -154,7 +130,6 @@ export class TradierClient {
       const sides = orderPayload['side[]'] || [];
       const quantities = orderPayload['quantity[]'] || [];
 
-      // Append array items with explicit indexed keys
       symbols.forEach((sym, idx) => body.append(`option_symbol[${idx}]`, sym));
       sides.forEach((side, idx) => body.append(`side[${idx}]`, side));
       quantities.forEach((qty, idx) => body.append(`quantity[${idx}]`, qty.toString()));
@@ -164,18 +139,11 @@ export class TradierClient {
       if (orderPayload.quantity) body.append('quantity', orderPayload.quantity.toString());
     }
 
-    // Log the constructed body for debugging Cloudflare logs
-    const bodyString = body.toString();
-    console.log(`[Tradier] Order Body: ${bodyString}`);
+    console.log(`[Tradier] Order Body: ${body.toString()}`);
 
-    // CRITICAL FIX: Convert URLSearchParams to string and explicitly set Content-Type
-    // This matches the working gekkoworks2 implementation
     const data = await this.request<{ order?: { id?: number; status?: string; }; }>(`/accounts/${this.accountId}/orders`, {
       method: 'POST',
-      body: bodyString,
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
+      body: body,
     });
 
     const order = data.order;
@@ -197,5 +165,8 @@ export class TradierClient {
 
 export function createTradierClient(env: Env): TradierClient {
   if (!env.TRADIER_ACCESS_TOKEN || !env.TRADIER_ACCOUNT_ID) throw new Error('TRADIER_ACCESS_TOKEN and TRADIER_ACCOUNT_ID must be set');
-  return new TradierClient(env.TRADIER_ACCESS_TOKEN, env.TRADIER_ACCOUNT_ID);
+  
+  // Auto-detect production mode from environment variable
+  const isProduction = env.ENV === 'production';
+  return new TradierClient(env.TRADIER_ACCESS_TOKEN, env.TRADIER_ACCOUNT_ID, isProduction);
 }
