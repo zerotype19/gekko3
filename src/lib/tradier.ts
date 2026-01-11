@@ -122,6 +122,9 @@ export class TradierClient {
       if (orderPayload.quantity) body.append('quantity', orderPayload.quantity.toString());
     }
 
+    // Log the constructed body for debugging Cloudflare logs
+    console.log(`[Tradier] Order Body: ${body.toString()}`);
+
     const data = await this.request<{ order?: { id?: number; status?: string; }; }>(`/accounts/${this.accountId}/orders`, {
       method: 'POST',
       body: body,
