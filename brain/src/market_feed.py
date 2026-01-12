@@ -496,6 +496,157 @@ class MarketFeed:
                 'indicators': indicators
             }
 
+    async def _get_expirations(self, symbol: str) -> list:
+        """
+        Fetch available expiration dates from Tradier API
+        
+        Args:
+            symbol: Underlying symbol (e.g., 'SPY')
+            
+        Returns:
+            List of expiration dates (YYYY-MM-DD format strings), or empty list on error
+        """
+        headers = {
+            'Authorization': f'Bearer {self.access_token}',
+            'Accept': 'application/json'
+        }
+        
+        url = f'{TRADIER_API_BASE}/markets/options/expirations'
+        params = {'symbol': symbol, 'includeAllRoots': 'true'}
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, params=params) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        # Tradier returns: { 'expirations': { 'date': [...] } }
+                        expirations = data.get('expirations', {})
+                        date_list = expirations.get('date', [])
+                        
+                        # Handle both single date and list of dates
+                        if isinstance(date_list, list):
+                            return date_list
+                        elif date_list:
+                            return [date_list]
+                        else:
+                            logging.warning(f"⚠️  No expirations found for {symbol}")
+                            return []
+                    else:
+                        error_text = await resp.text()
+                        logging.error(f"❌ Failed to fetch expirations: {resp.status} - {error_text}")
+                        return []
+        except Exception as e:
+            logging.error(f"❌ Error fetching expirations: {e}")
+            return []
+
+    async def _get_best_expiration(self, symbol: str) -> Optional[str]:
+        """
+        Scan available expirations (14-45 DTE) and select the best one
+        
+        Strategy: Select expiration closest to 30 DTE (sweet spot for credit spreads)
+        
+        Args:
+            symbol: Underlying symbol (e.g., 'SPY')
+            
+        Returns:
+            Best expiration date (YYYY-MM-DD format string), or None if none found
+        """
+        from datetime import datetime
+        
+        # Get all available expirations
+        expirations = await self._get_expirations(symbol)
+        if not expirations:
+            logging.error(f"❌ Could not fetch expirations for {symbol}")
+            return None
+        
+        today = datetime.now().date()
+        min_dte = 14
+        max_dte = 45
+        target_dte = 30  # Ideal DTE for credit spreads
+        
+        # Filter expirations to 14-45 DTE range
+        valid_expirations = []
+        for exp_str in expirations:
+            try:
+                exp_date = datetime.strptime(exp_str, '%Y-%m-%d').date()
+                dte = (exp_date - today).days
+                
+                if min_dte <= dte <= max_dte:
+                    valid_expirations.append((dte, exp_str))
+            except (ValueError, TypeError):
+                continue  # Skip invalid date formats
+        
+        if not valid_expirations:
+            # Fallback: Try 7-60 days if sweet spot is empty
+            for exp_str in expirations:
+                try:
+                    exp_date = datetime.strptime(exp_str, '%Y-%m-%d').date()
+                    dte = (exp_date - today).days
+                    if 7 <= dte <= 60:
+                        valid_expirations.append((dte, exp_str))
+                except (ValueError, TypeError):
+                    continue
+        
+        if not valid_expirations:
+            logging.warning(f"⚠️  No suitable expirations found for {symbol}")
+            return None
+        
+        # Sort by distance to target DTE (30 days) - prefer closest to 30
+        valid_expirations.sort(key=lambda x: abs(x[0] - target_dte))
+        
+        best_dte, best_expiration = valid_expirations[0]
+        logging.info(f"📅 Selected expiration: {best_expiration} ({best_dte} DTE)")
+        
+        return best_expiration
+
+    async def _get_option_chain(self, symbol: str, expiration: str) -> list:
+        """
+        Fetch option chain from Tradier API for a specific expiration
+        
+        Args:
+            symbol: Underlying symbol (e.g., 'SPY')
+            expiration: Expiration date in YYYY-MM-DD format
+            
+        Returns:
+            List of option contracts with bid/ask prices, or empty list on error
+        """
+        headers = {
+            'Authorization': f'Bearer {self.access_token}',
+            'Accept': 'application/json'
+        }
+        
+        url = f'{TRADIER_API_BASE}/markets/options/chains'
+        params = {
+            'symbol': symbol,
+            'expiration': expiration,
+            'greeks': 'true'  # Include Greeks for delta calculations
+        }
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, params=params) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        # Tradier returns: { 'options': { 'option': [...] } }
+                        options = data.get('options', {})
+                        option_list = options.get('option', [])
+                        
+                        # Handle both single option and list of options
+                        if isinstance(option_list, list):
+                            return option_list
+                        elif option_list:
+                            return [option_list]
+                        else:
+                            logging.warning(f"⚠️  No options found in chain for {symbol} {expiration}")
+                            return []
+                    else:
+                        error_text = await resp.text()
+                        logging.error(f"❌ Failed to fetch option chain: {resp.status} - {error_text}")
+                        return []
+        except Exception as e:
+            logging.error(f"❌ Error fetching option chain: {e}")
+            return []
+
     async def _send_proposal(
         self,
         symbol: str,
@@ -505,77 +656,123 @@ class MarketFeed:
         indicators: dict,
         bias: str
     ):
-        """Send a trade proposal to the Gatekeeper"""
-        # For V1, create a simplified proposal
-        # In production, this would need actual option chain data to construct legs
-        
-        # Mock option legs (in production, fetch from Tradier option chain)
-        # This is a placeholder - real implementation needs:
-        # 1. Fetch option chain for symbol
-        # 2. Select strikes based on delta/DTE requirements
-        # 3. Construct proper SpreadLeg objects
-        
+        """Send a trade proposal to the Gatekeeper using real option chain data"""
         from datetime import datetime, timedelta
-        
-        # Calculate expiration date (next Friday, or 1-7 DTE)
-        today = datetime.now()
-        days_until_friday = (4 - today.weekday()) % 7
-        if days_until_friday == 0:
-            days_until_friday = 7  # If today is Friday, use next Friday
-        expiration_date = today + timedelta(days=days_until_friday)
-        
-        # Adjust to ensure 1-7 DTE
-        if days_until_friday < 1:
-            expiration_date = today + timedelta(days=1)
-        elif days_until_friday > 7:
-            expiration_date = today + timedelta(days=7)
         
         current_price = indicators['price']
         
-        # Mock strikes (in production, calculate proper strikes from option chain)
+        # Find best expiration (14-45 DTE, prefers 30 DTE)
+        expiration_str = await self._get_best_expiration(symbol)
+        
+        if not expiration_str:
+            logging.error(f"❌ Could not find suitable expiration for {symbol}. Aborting proposal.")
+            return
+        
+        # Fetch real option chain from Tradier for the selected expiration
+        logging.info(f"🔍 Fetching {symbol} option chain for {expiration_str}...")
+        option_chain = await self._get_option_chain(symbol, expiration_str)
+        
+        if not option_chain:
+            logging.error(f"❌ Could not fetch option chain for {symbol}. Aborting proposal.")
+            return
+        
+        # Filter for correct option type (put/call)
+        option_type_lower = option_type.lower()
+        filtered_options = [
+            opt for opt in option_chain 
+            if opt.get('option_type', '').lower() == option_type_lower
+        ]
+        
+        if not filtered_options:
+            logging.error(f"❌ No {option_type} options found in chain for {symbol}")
+            return
+        
+        # Sort by strike price
+        filtered_options.sort(key=lambda x: float(x.get('strike', 0)))
+        
+        # Select strikes based on strategy
+        # For credit spreads, we want to sell OTM options (higher for puts, lower for calls)
+        short_leg = None
+        long_leg = None
+        
         if option_type == 'PUT':
-            # Bull Put Spread: Sell higher strike, buy lower strike
-            sell_strike = int(current_price * 0.98)  # 2% OTM
-            buy_strike = int(current_price * 0.96)   # 4% OTM
+            # Bull Put Spread: Sell higher strike PUT, buy lower strike PUT
+            # Target: Sell PUT ~2% OTM (delta ~-0.20), buy PUT ~4% OTM (wider spread)
+            target_sell_strike = current_price * 0.98  # 2% OTM
+            # Find closest strike at or below target
+            candidates = [opt for opt in filtered_options if float(opt.get('strike', 0)) <= target_sell_strike]
+            if candidates:
+                short_leg = candidates[-1]  # Closest to target from below
+                short_strike = float(short_leg.get('strike', 0))
+                # Find long leg (buy lower strike, typically $5-$10 wide)
+                long_candidates = [opt for opt in filtered_options if float(opt.get('strike', 0)) <= short_strike - 5]
+                if long_candidates:
+                    long_leg = long_candidates[-1]  # Closest $5+ below short strike
         else:  # CALL
-            # Bear Call Spread: Sell lower strike, buy higher strike
-            sell_strike = int(current_price * 1.02)  # 2% OTM
-            buy_strike = int(current_price * 1.04)   # 4% OTM
+            # Bear Call Spread: Sell lower strike CALL, buy higher strike CALL
+            # Target: Sell CALL ~2% OTM (delta ~0.20), buy CALL ~4% OTM
+            target_sell_strike = current_price * 1.02  # 2% OTM
+            # Find closest strike at or above target
+            candidates = [opt for opt in filtered_options if float(opt.get('strike', 0)) >= target_sell_strike]
+            if candidates:
+                short_leg = candidates[0]  # Closest to target from above
+                short_strike = float(short_leg.get('strike', 0))
+                # Find long leg (buy higher strike, typically $5-$10 wide)
+                long_candidates = [opt for opt in filtered_options if float(opt.get('strike', 0)) >= short_strike + 5]
+                if long_candidates:
+                    long_leg = long_candidates[0]  # Closest $5+ above short strike
         
-        # CRITICAL FIX: Tradier/OCC requires strike * 1000 in option symbol
-        # Format: SYMBOL + YYMMDD + C/P + (STRIKE * 1000 padded to 8 digits)
-        sell_strike_fmt = int(sell_strike * 1000)  # Multiply by 1000 for OCC format
-        buy_strike_fmt = int(buy_strike * 1000)    # Multiply by 1000 for OCC format
+        if not short_leg or not long_leg:
+            logging.error(f"❌ Could not find suitable strikes for {option_type} spread on {symbol}")
+            return
         
-        # Calculate mock limit price (Net Credit for credit spreads)
-        # In production, this should be calculated from actual option bid/ask spreads
-        # For now: Use a conservative estimate (e.g., 0.5% of underlying price)
-        # This ensures we always have a limit price (required by Gatekeeper)
-        mock_net_credit = max(0.10, current_price * 0.005)  # Minimum $0.10, or 0.5% of price
+        # Extract bid/ask prices
+        short_bid = float(short_leg.get('bid', 0) or 0)
+        long_ask = float(long_leg.get('ask', 0) or 0)
         
-        # Ensure option type is uppercase (PUT/CALL)
+        # Safety check for zero liquidity
+        if short_bid == 0 or long_ask == 0:
+            logging.warning(f"⚠️  Zero liquidity detected (Short Bid: {short_bid}, Long Ask: {long_ask}). Aborting.")
+            return
+        
+        # Calculate real net credit: Credit = Short Bid - Long Ask
+        fair_credit = short_bid - long_ask
+        
+        # Apply buffer (give up 5 cents to ensure fill)
+        # This ensures we're slightly below fair value, improving fill probability
+        limit_price = max(0.05, fair_credit - 0.05)
+        
+        logging.info(f"💰 Real pricing: Short Bid ${short_bid:.2f} - Long Ask ${long_ask:.2f} = Fair ${fair_credit:.2f}. Limit: ${limit_price:.2f}")
+        
+        # Extract option data
+        short_strike = float(short_leg.get('strike', 0))
+        long_strike = float(long_leg.get('strike', 0))
+        short_symbol = short_leg.get('symbol', '')
+        long_symbol = long_leg.get('symbol', '')
+        
+        # Ensure option type is uppercase
         option_type_upper = option_type.upper()
         
-        # Create proposal with mandatory price field
+        # Create proposal with mandatory price field using REAL option data
         proposal = {
             'symbol': symbol,
             'strategy': strategy,
             'side': side,  # Now 'OPEN' or 'CLOSE' (not 'BUY'/'SELL')
             'quantity': 1,  # Default to 1 contract
-            'price': round(mock_net_credit, 2),  # MANDATORY: Limit price (net credit for opens)
+            'price': round(limit_price, 2),  # REAL limit price from bid/ask spread
             'legs': [
                 {
-                    'symbol': f"{symbol}{expiration_date.strftime('%y%m%d')}{option_type_upper[0]}{sell_strike_fmt:08d}",
-                    'expiration': expiration_date.strftime('%Y-%m-%d'),
-                    'strike': sell_strike,
+                    'symbol': short_symbol,  # Real option symbol from Tradier
+                    'expiration': expiration_str,
+                    'strike': short_strike,  # Real strike from option chain
                     'type': option_type_upper,  # Uppercase: PUT or CALL
                     'quantity': 1,
                     'side': 'SELL'
                 },
                 {
-                    'symbol': f"{symbol}{expiration_date.strftime('%y%m%d')}{option_type_upper[0]}{buy_strike_fmt:08d}",
-                    'expiration': expiration_date.strftime('%Y-%m-%d'),
-                    'strike': buy_strike,
+                    'symbol': long_symbol,  # Real option symbol from Tradier
+                    'expiration': expiration_str,
+                    'strike': long_strike,  # Real strike from option chain
                     'type': option_type_upper,  # Uppercase: PUT or CALL
                     'quantity': 1,
                     'side': 'BUY'

@@ -13,9 +13,9 @@ export const CONSTITUTION: RiskConfig = {
   // Strategy: Only credit spreads are permitted
   allowedStrategies: ['CREDIT_SPREAD'] as const,
 
-  // Risk Limits (INCREASED FOR MONDAY VALIDATION)
-  maxOpenPositions: 8,          // Increased from 4
-  maxConcentrationPerSymbol: 4, // Increased from 2
+  // Risk Limits (MICRO-SIZE FOR SAFETY)
+  maxOpenPositions: 1,          // Micro-size: 1 contract for safety
+  maxConcentrationPerSymbol: 1, // Micro-size: 1 position per symbol
   maxDailyLossPercent: 0.02,    // Keeps 2% hard stop (Safety First).
 
   // Execution Constraints
