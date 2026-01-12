@@ -659,6 +659,9 @@ export class GatekeeperDO {
   async getStatus(): Promise<SystemStatus> {
     await this.initializeState();
 
+    // Sync account state from Tradier before reading positions (ensures dashboard shows real data)
+    await this.syncAccountState();
+
     const equity = await this.getCurrentEquity();
     const dailyPnL = await this.getDailyLossPercent();
     const positionsCount = await this.getOpenPositionsCount();
