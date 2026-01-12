@@ -365,10 +365,56 @@ class MarketFeed:
         # Get indicators
         indicators = self.alpha_engine.get_indicators(symbol)
         
-        # Warmup mode enforcement: Need sufficient data AND VIX
-        if not indicators.get('is_warm', False):
-            # Not ready - missing SMA data or VIX
-            candle_count = indicators.get('candle_count', 0)
+        # Initialize signal tracking (for ORB or trend signals)
+        signal = None
+        strategy = None
+        side = None
+        option_type = None
+        bias = None
+        
+        # --- STRATEGY 1: EARLY BIRD (Opening Range Breakout) ---
+        # Window: 10:00 AM - 11:30 AM ET
+        # This runs BEFORE the 200-minute warmup check because it only needs 30 candles.
+        
+        current_hour = now.hour
+        current_minute = now.minute
+        
+        # 1. ORB Execution Window (10:00 - 11:29)
+        is_orb_window = (current_hour == 10) or (current_hour == 11 and current_minute < 30)
+        
+        # 2. Safety: We need at least 30 candles (9:30-10:00) to have a range
+        if is_orb_window and indicators.get('candle_count', 0) >= 30:
+            orb = self.alpha_engine.get_opening_range(symbol)
+            
+            if orb['complete'] and orb['high'] is not None and orb['low'] is not None:
+                current_price = indicators['price']
+                vol_velocity = indicators['volume_velocity']
+                
+                # BREAKOUT BULL (Price > High + Volume)
+                if current_price > orb['high'] and vol_velocity > 1.5:
+                    signal = 'ORB_BREAKOUT_BULL'
+                    strategy = 'CREDIT_SPREAD'
+                    side = 'OPEN'
+                    option_type = 'PUT'  # Sell Put Spread
+                    bias = 'bullish'
+                    logging.info(f"🎯 ORB BULL Signal: {symbol} broke above ${orb['high']:.2f} @ ${current_price:.2f} (Vol: {vol_velocity:.2f})")
+                    
+                # BREAKOUT BEAR (Price < Low + Volume)
+                elif current_price < orb['low'] and vol_velocity > 1.5:
+                    signal = 'ORB_BREAKOUT_BEAR'
+                    strategy = 'CREDIT_SPREAD'
+                    side = 'OPEN'
+                    option_type = 'CALL'  # Sell Call Spread
+                    bias = 'bearish'
+                    logging.info(f"🎯 ORB BEAR Signal: {symbol} broke below ${orb['low']:.2f} @ ${current_price:.2f} (Vol: {vol_velocity:.2f})")
+        
+        # --- WARMUP GUARD (For Main Strategy) ---
+        # If we didn't get an ORB signal, we must respect the 200-minute warmup
+        if not signal:
+            # Warmup mode enforcement: Need sufficient data AND VIX
+            if not indicators.get('is_warm', False):
+                # Not ready - missing SMA data or VIX
+                candle_count = indicators.get('candle_count', 0)
             sma_200 = indicators.get('sma_200')
             vix = indicators.get('vix')
             
@@ -389,75 +435,69 @@ class MarketFeed:
                 logging.debug(f"⏳ {symbol}: Waiting for VIX data...")
                 return  # Skip if VIX not available yet
         
-        if indicators['candle_count'] < 30:  # Need minimum candles for RSI
-            return
-        
-        flow_state = indicators['flow_state']
-        trend = indicators['trend']
-        rsi = indicators['rsi']
-        vix = indicators.get('vix')
-        
-        # Track trend changes for notifications
-        if symbol in self.last_trend and self.last_trend[symbol] != trend:
-            # Trend changed - notify
-            trend_emoji = "📈" if trend == "UPTREND" else "📉" if trend == "DOWNTREND" else "⏳"
+            if indicators['candle_count'] < 30:  # Need minimum candles for RSI
+                return
             
-            # Special notification when warmup completes (INSUFFICIENT_DATA → UPTREND/DOWNTREND)
-            if self.last_trend[symbol] == 'INSUFFICIENT_DATA' and trend in ['UPTREND', 'DOWNTREND']:
-                await self.notifier.send_success(
-                    f"✅ **Warmup Complete: {symbol}**\n\n"
-                    f"System is now ready for trading signals!\n\n"
-                    f"**Trend:** {trend}\n"
-                    f"**Price:** ${indicators['price']:.2f}\n"
-                    f"**SMA 200:** ${indicators.get('sma_200', 'N/A')}\n"
-                    f"**Candles:** {indicators.get('candle_count', 0)}/200\n"
-                    f"**VIX:** {vix:.2f if vix else 'N/A'}",
-                    title="System Ready"
-                )
-                logging.info(f"✅ {symbol}: Warmup complete! Trend: {trend}, Candles: {indicators.get('candle_count', 0)}")
-            else:
-                await self.notifier.send_info(
-                    f"{trend_emoji} **Trend Changed: {symbol}**\n\n"
-                    f"**{self.last_trend[symbol]}** → **{trend}**\n"
-                    f"Price: ${indicators['price']:.2f}\n"
-                    f"SMA 200: ${indicators.get('sma_200', 'N/A')}\n"
-                    f"VIX: {vix:.2f if vix else 'N/A'}",
-                    title="Trend Change"
-                )
-        
-        self.last_trend[symbol] = trend
-        
-        # Additional safety: Reject if VIX is missing (shouldn't happen if is_warm, but double-check)
-        if vix is None:
-            if indicators.get('candle_count', 0) % 60 == 0:  # Log every minute to avoid spam
-                logging.warning(f"⚠️  {symbol}: VIX missing - system in warmup mode, skipping signals")
-            return
-        
-        # Signal logic (The "Tier A" Setup)
-        signal = None
-        strategy = None
-        side = None
-        option_type = None
-        
-        # Only generate signals with valid trend (not INSUFFICIENT_DATA)
-        if trend == 'INSUFFICIENT_DATA':
-            return  # Skip signals if trend not available
-        
-        # Bull Put Spread (credit spread on puts) - when oversold in uptrend
-        if trend == 'UPTREND' and rsi < 30 and flow_state != 'NEUTRAL':
-            signal = 'BULL_PUT_SPREAD'
-            strategy = 'CREDIT_SPREAD'
-            side = 'OPEN'  # OPEN = Enter new position
-            option_type = 'PUT'
-            bias = 'bullish'
-        
-        # Bear Call Spread (credit spread on calls) - when overbought in downtrend
-        elif trend == 'DOWNTREND' and rsi > 70 and flow_state != 'NEUTRAL':
-            signal = 'BEAR_CALL_SPREAD'
-            strategy = 'CREDIT_SPREAD'
-            side = 'OPEN'  # OPEN = Enter new position
-            option_type = 'CALL'
-            bias = 'bearish'
+            flow_state = indicators['flow_state']
+            trend = indicators['trend']
+            rsi = indicators['rsi']
+            vix = indicators.get('vix')
+            
+            # Track trend changes for notifications
+            if symbol in self.last_trend and self.last_trend[symbol] != trend:
+                # Trend changed - notify
+                trend_emoji = "📈" if trend == "UPTREND" else "📉" if trend == "DOWNTREND" else "⏳"
+                
+                # Special notification when warmup completes (INSUFFICIENT_DATA → UPTREND/DOWNTREND)
+                if self.last_trend[symbol] == 'INSUFFICIENT_DATA' and trend in ['UPTREND', 'DOWNTREND']:
+                    await self.notifier.send_success(
+                        f"✅ **Warmup Complete: {symbol}**\n\n"
+                        f"System is now ready for trading signals!\n\n"
+                        f"**Trend:** {trend}\n"
+                        f"**Price:** ${indicators['price']:.2f}\n"
+                        f"**SMA 200:** ${indicators.get('sma_200', 'N/A')}\n"
+                        f"**Candles:** {indicators.get('candle_count', 0)}/200\n"
+                        f"**VIX:** {vix:.2f if vix else 'N/A'}",
+                        title="System Ready"
+                    )
+                    logging.info(f"✅ {symbol}: Warmup complete! Trend: {trend}, Candles: {indicators.get('candle_count', 0)}")
+                else:
+                    await self.notifier.send_info(
+                        f"{trend_emoji} **Trend Changed: {symbol}**\n\n"
+                        f"**{self.last_trend[symbol]}** → **{trend}**\n"
+                        f"Price: ${indicators['price']:.2f}\n"
+                        f"SMA 200: ${indicators.get('sma_200', 'N/A')}\n"
+                        f"VIX: {vix:.2f if vix else 'N/A'}",
+                        title="Trend Change"
+                    )
+            
+            self.last_trend[symbol] = trend
+            
+            # Additional safety: Reject if VIX is missing (shouldn't happen if is_warm, but double-check)
+            if vix is None:
+                if indicators.get('candle_count', 0) % 60 == 0:  # Log every minute to avoid spam
+                    logging.warning(f"⚠️  {symbol}: VIX missing - system in warmup mode, skipping signals")
+                return
+            
+            # Only generate signals with valid trend (not INSUFFICIENT_DATA)
+            if trend == 'INSUFFICIENT_DATA':
+                return  # Skip signals if trend not available
+            
+            # Bull Put Spread (credit spread on puts) - when oversold in uptrend
+            if trend == 'UPTREND' and rsi < 30 and flow_state != 'NEUTRAL':
+                signal = 'BULL_PUT_SPREAD'
+                strategy = 'CREDIT_SPREAD'
+                side = 'OPEN'  # OPEN = Enter new position
+                option_type = 'PUT'
+                bias = 'bullish'
+            
+            # Bear Call Spread (credit spread on calls) - when overbought in downtrend
+            elif trend == 'DOWNTREND' and rsi > 70 and flow_state != 'NEUTRAL':
+                signal = 'BEAR_CALL_SPREAD'
+                strategy = 'CREDIT_SPREAD'
+                side = 'OPEN'  # OPEN = Enter new position
+                option_type = 'CALL'
+                bias = 'bearish'
         
         # Check if signal changed (avoid duplicate signals)
         last_signal = self.last_signals.get(symbol, {})

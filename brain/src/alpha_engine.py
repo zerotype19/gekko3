@@ -38,6 +38,10 @@ class AlphaEngine:
         # Session start time (for VWAP calculation)
         self.session_start: Optional[datetime] = None
         
+        # Opening Range tracking (9:30 AM - 10:00 AM ET)
+        # Structure: {symbol: {'high': float, 'low': float, 'complete': bool}}
+        self.opening_range: Dict[str, Dict] = {}
+        
         # VIX state (updated by external poller)
         self.current_vix: Optional[float] = None
         self.vix_timestamp: Optional[datetime] = None
@@ -77,6 +81,8 @@ class AlphaEngine:
         self.session_vwap = {}
         self.session_pv = {}
         self.session_volume = {}
+        # Reset opening range for new session
+        self.opening_range = {}
         # Reset RSI state on new session (optional - could maintain across sessions)
         # For now, reset to recalculate from fresh session data
         self.rsi_state.clear()
@@ -402,6 +408,45 @@ class AlphaEngine:
     def get_vix(self) -> Optional[float]:
         """Get current VIX value"""
         return self.current_vix
+
+    def get_opening_range(self, symbol: str) -> Dict:
+        """
+        Get the opening range (9:30 AM - 10:00 AM ET) high and low
+        
+        Returns:
+            Dict with 'high', 'low', and 'complete' (bool indicating if range is ready)
+        """
+        if symbol not in self.opening_range:
+            # Try to calculate from candles if we have data
+            if symbol in self.candles and not self.candles[symbol].empty:
+                df = self.candles[symbol]
+                # Filter for first 30 candles (9:30-10:00 AM, assuming 1-minute bars)
+                if len(df) > 0:
+                    # Get first 30 candles (9:30-10:00 AM)
+                    range_df = df.head(30)
+                    if len(range_df) >= 30:
+                        high = range_df['high'].max()
+                        low = range_df['low'].min()
+                        self.opening_range[symbol] = {
+                            'high': float(high),
+                            'low': float(low),
+                            'complete': True
+                        }
+                    else:
+                        # Range not complete yet, use what we have
+                        high = range_df['high'].max()
+                        low = range_df['low'].min()
+                        self.opening_range[symbol] = {
+                            'high': float(high),
+                            'low': float(low),
+                            'complete': False
+                        }
+                else:
+                    return {'high': None, 'low': None, 'complete': False}
+            else:
+                return {'high': None, 'low': None, 'complete': False}
+        
+        return self.opening_range.get(symbol, {'high': None, 'low': None, 'complete': False})
 
     def get_indicators(self, symbol: str) -> Dict:
         """
