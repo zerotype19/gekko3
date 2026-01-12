@@ -368,9 +368,24 @@ class MarketFeed:
         # Warmup mode enforcement: Need sufficient data AND VIX
         if not indicators.get('is_warm', False):
             # Not ready - missing SMA data or VIX
-            if indicators.get('sma_200') is None:
+            candle_count = indicators.get('candle_count', 0)
+            sma_200 = indicators.get('sma_200')
+            vix = indicators.get('vix')
+            
+            # Log warmup progress every 10 candles (to track progress without spam)
+            if candle_count > 0 and candle_count % 10 == 0:
+                progress_pct = min(100, (candle_count / 200) * 100)
+                status_parts = []
+                if sma_200 is None:
+                    status_parts.append(f"⏳ Warmup: {candle_count}/200 candles ({progress_pct:.0f}%)")
+                if vix is None:
+                    status_parts.append("Waiting for VIX...")
+                if status_parts:
+                    logging.info(f"📊 {symbol}: {' | '.join(status_parts)}")
+            
+            if sma_200 is None:
                 return  # Skip if SMA not available (need 200 candles)
-            if indicators.get('vix') is None:
+            if vix is None:
                 logging.debug(f"⏳ {symbol}: Waiting for VIX data...")
                 return  # Skip if VIX not available yet
         
@@ -386,14 +401,29 @@ class MarketFeed:
         if symbol in self.last_trend and self.last_trend[symbol] != trend:
             # Trend changed - notify
             trend_emoji = "📈" if trend == "UPTREND" else "📉" if trend == "DOWNTREND" else "⏳"
-            await self.notifier.send_info(
-                f"{trend_emoji} **Trend Changed: {symbol}**\n\n"
-                f"**{self.last_trend[symbol]}** → **{trend}**\n"
-                f"Price: ${indicators['price']:.2f}\n"
-                f"SMA 200: ${indicators.get('sma_200', 'N/A')}\n"
-                f"VIX: {vix:.2f if vix else 'N/A'}",
-                title="Trend Change"
-            )
+            
+            # Special notification when warmup completes (INSUFFICIENT_DATA → UPTREND/DOWNTREND)
+            if self.last_trend[symbol] == 'INSUFFICIENT_DATA' and trend in ['UPTREND', 'DOWNTREND']:
+                await self.notifier.send_success(
+                    f"✅ **Warmup Complete: {symbol}**\n\n"
+                    f"System is now ready for trading signals!\n\n"
+                    f"**Trend:** {trend}\n"
+                    f"**Price:** ${indicators['price']:.2f}\n"
+                    f"**SMA 200:** ${indicators.get('sma_200', 'N/A')}\n"
+                    f"**Candles:** {indicators.get('candle_count', 0)}/200\n"
+                    f"**VIX:** {vix:.2f if vix else 'N/A'}",
+                    title="System Ready"
+                )
+                logging.info(f"✅ {symbol}: Warmup complete! Trend: {trend}, Candles: {indicators.get('candle_count', 0)}")
+            else:
+                await self.notifier.send_info(
+                    f"{trend_emoji} **Trend Changed: {symbol}**\n\n"
+                    f"**{self.last_trend[symbol]}** → **{trend}**\n"
+                    f"Price: ${indicators['price']:.2f}\n"
+                    f"SMA 200: ${indicators.get('sma_200', 'N/A')}\n"
+                    f"VIX: {vix:.2f if vix else 'N/A'}",
+                    title="Trend Change"
+                )
         
         self.last_trend[symbol] = trend
         
