@@ -44,7 +44,7 @@ class BrainSupervisor:
         self.gatekeeper = GatekeeperClient()
         logging.info("✅ Gatekeeper Client initialized")
         
-        self.alpha_engine = AlphaEngine(lookback_minutes=60)
+        self.alpha_engine = AlphaEngine(lookback_minutes=400)  # Increased to support SMA(200) + buffer
         logging.info("✅ Alpha Engine initialized")
         
         self.market_feed = MarketFeed(
