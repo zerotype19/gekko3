@@ -91,8 +91,6 @@ class MarketFeed:
                 json.dump(state, f, indent=2)
         except Exception as e:
             logging.error(f"Failed to export state: {e}")
-        
-        self.notifier = get_notifier()
 
     # --- VIX Polling ---
     async def _poll_vix_loop(self):
