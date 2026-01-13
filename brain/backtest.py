@@ -1,14 +1,17 @@
 """
 Backtester: Time Machine for Gekko3
 Replays historical data through AlphaEngine to test strategies
+Includes P&L Tracking and Risk Metrics
 """
 
 import pandas as pd
+import numpy as np
 import asyncio
 import json
 from datetime import datetime, timedelta
 import requests
 import os
+import traceback
 from dotenv import load_dotenv
 
 from src.alpha_engine import AlphaEngine
@@ -19,49 +22,90 @@ load_dotenv()
 
 TRADIER_API_BASE = "https://api.tradier.com/v1"
 
+class BacktestTrade:
+    def __init__(self, symbol, strategy, side, entry_price, entry_time, size=100):
+        self.symbol = symbol
+        self.strategy = strategy
+        self.side = side  # 'LONG', 'SHORT', 'NEUTRAL'
+        self.entry_price = entry_price
+        self.entry_time = entry_time
+        self.size = size  # Number of shares/units
+        self.exit_price = None
+        self.exit_time = None
+        self.status = 'OPEN'
+        self.pnl = 0.0
+        self.return_pct = 0.0
 
-class MockGatekeeper:
-    """Mock Gatekeeper that logs trades instead of executing them"""
-    
+    def close(self, exit_price, exit_time):
+        self.exit_price = exit_price
+        self.exit_time = exit_time
+        self.status = 'CLOSED'
+        
+        # Calculate P&L (Simulated)
+        if self.side == 'LONG':
+            self.pnl = (self.exit_price - self.entry_price) * self.size
+        elif self.side == 'SHORT':
+            self.pnl = (self.entry_price - self.exit_price) * self.size
+        elif self.side == 'NEUTRAL': # Iron Condor / Credit Spread Logic
+            # Simulation: Win if price stays within +/- 0.5% of entry
+            # Assume Credit = $50. Risk = $450 (Standard $5 wide spread)
+            move_pct = abs(self.exit_price - self.entry_price) / self.entry_price
+            
+            if move_pct < 0.005:
+                # Win: Kept premium
+                self.pnl = 50.0 * (self.size / 100)
+            else:
+                # Loss: Drifted too far
+                # Approximate loss gradient: -$100 per 1% move beyond threshold
+                # Cap at max loss of spread ($450)
+                excess_move = move_pct - 0.005
+                theoretical_loss = excess_move * self.entry_price * self.size
+                self.pnl = -min(theoretical_loss, 450.0 * (self.size / 100))
+
+        # ROI (Estimate)
+        if self.side == 'NEUTRAL':
+            invested = 500.0 * (self.size / 100) # Margin requirement
+        else:
+            invested = self.entry_price * self.size
+            
+        if invested > 0:
+            self.return_pct = (self.pnl / invested) * 100
+
+class BacktestAccountant:
     def __init__(self):
         self.trades = []
-        self.notifier = get_notifier()
-    
-    async def send_proposal(self, proposal):
-        """Log the trade proposal instead of sending to real Gatekeeper"""
-        trade_record = {
-            'timestamp': datetime.now().isoformat(),
-            'symbol': proposal['symbol'],
-            'strategy': proposal['strategy'],
-            'side': proposal['side'],
-            'price': proposal['price'],
-            'legs': proposal.get('legs', []),
-            'context': proposal.get('context', {})
-        }
-        self.trades.append(trade_record)
+        self.closed_trades = []
         
-        print(f"💰 [BACKTEST TRADE] {proposal['side']} {proposal['symbol']} "
-              f"{proposal['strategy']} @ ${proposal['price']:.2f}")
-        print(f"   Context: VIX={proposal.get('context', {}).get('vix', 0):.1f}, "
-              f"RSI={proposal.get('context', {}).get('rsi', 0):.1f}, "
-              f"Trend={proposal.get('context', {}).get('trend_state', 'unknown')}")
-    
-    def get_trade_summary(self):
-        """Return summary of all trades"""
-        if not self.trades:
-            return "No trades executed"
-        
-        total_trades = len(self.trades)
-        by_strategy = {}
-        for trade in self.trades:
-            strat = trade['strategy']
-            by_strategy[strat] = by_strategy.get(strat, 0) + 1
-        
-        summary = f"\n📊 BACKTEST SUMMARY\n"
-        summary += f"Total Trades: {total_trades}\n"
-        summary += f"By Strategy: {by_strategy}\n"
-        return summary
+    def log_trade(self, trade):
+        self.trades.append(trade)
+        print(f"💰 [OPEN] {trade.strategy} ({trade.side}) @ ${trade.entry_price:.2f}")
 
+    def close_trade(self, trade):
+        self.closed_trades.append(trade)
+        print(f"🔒 [CLOSE] {trade.strategy} @ ${trade.exit_price:.2f} | P&L: ${trade.pnl:.2f} ({trade.return_pct:.1f}%)")
+
+    def get_summary(self):
+        if not self.closed_trades:
+            return "No trades closed."
+            
+        total_pnl = sum(t.pnl for t in self.closed_trades)
+        wins = [t for t in self.closed_trades if t.pnl > 0]
+        win_rate = len(wins) / len(self.closed_trades) * 100
+        
+        # Max Drawdown
+        cumulative = np.cumsum([t.pnl for t in self.closed_trades])
+        peak = np.maximum.accumulate(cumulative)
+        drawdown = peak - cumulative
+        max_dd = np.max(drawdown) if len(drawdown) > 0 else 0.0
+        
+        summary =  f"\n📊 PERFORMANCE REPORT\n"
+        summary += f"----------------------------------------\n"
+        summary += f"Total Trades:   {len(self.closed_trades)}\n"
+        summary += f"Win Rate:       {win_rate:.1f}%\n"
+        summary += f"Total P&L:      ${total_pnl:.2f}\n"
+        summary += f"Max Drawdown:   -${max_dd:.2f}\n"
+        summary += f"----------------------------------------"
+        return summary
 
 async def fetch_historical_data(symbol: str, days: int = 20) -> pd.DataFrame:
     """
@@ -90,7 +134,7 @@ async def fetch_historical_data(symbol: str, days: int = 20) -> pd.DataFrame:
     }
     
     try:
-        # Use synchronous requests to avoid any async complications in a simple script
+        # Use synchronous requests
         resp = requests.get(url, headers=headers, params=params, timeout=30)
         
         if resp.status_code == 200:
@@ -101,10 +145,9 @@ async def fetch_historical_data(symbol: str, days: int = 20) -> pd.DataFrame:
                 print("⚠️  No data returned. Market might be closed or symbol invalid.")
                 return create_placeholder_data(symbol, days)
             
-            # Robust data cleaning to prevent "Duplicate Keys" error
+            # Robust data cleaning
             clean_data = []
             for row in series:
-                # Prioritize ISO time string, fallback to unix timestamp
                 ts_val = row.get('time')
                 if ts_val:
                     ts = pd.to_datetime(ts_val)
@@ -136,9 +179,7 @@ async def fetch_historical_data(symbol: str, days: int = 20) -> pd.DataFrame:
         print(f"⚠️  Connection Error: {e}")
         return create_placeholder_data(symbol, days)
 
-
 def create_placeholder_data(symbol: str, days: int) -> pd.DataFrame:
-    """Create placeholder data for testing when API is unavailable"""
     print("📝 Creating placeholder data for testing...")
     dates = pd.date_range(
         start=datetime.now() - timedelta(days=days),
@@ -161,40 +202,55 @@ def create_placeholder_data(symbol: str, days: int) -> pd.DataFrame:
     })
     return df
 
-
 async def run_backtest(symbol: str = 'SPY', days: int = 20):
-    print(f"\n{'='*60}\n🧪 GEKKO3 BACKTESTER\n{'='*60}")
+    print(f"\n{'='*60}\n🧪 GEKKO3 BACKTESTER (P&L Tracking Enabled)\n{'='*60}")
     
-    # Initialize components
     engine = AlphaEngine(lookback_minutes=400) 
-    gatekeeper = MockGatekeeper()
+    accountant = BacktestAccountant()
     
     df = await fetch_historical_data(symbol, days)
     if df.empty: return
     
     print(f"\n▶️  Starting replay of {len(df)} candles...\n")
     
-    signal_count = 0
+    open_trades = []
     warmup_complete_at = None
     
-    # Signal deduplication (match production logic)
-    last_proposal_time = {}  # {symbol: datetime}
-    last_signals = {}  # {symbol: {'signal': str, 'timestamp': datetime}}
-    min_proposal_interval = timedelta(minutes=1)  # Minimum time between proposals
-    
-    # Track daily signals to prevent duplicates
-    daily_signals = {}  # {date: {strategy: bool}} to track if strategy fired today
+    # Track signal history
+    last_signals = {}
+    daily_signals = {} 
     
     for idx, row in df.iterrows():
         timestamp = pd.to_datetime(row['timestamp'])
+        price = float(row['close'])
         
-        # 1. Feed Engine (Simulate Real-Time)
-        engine.update(symbol, float(row['close']), int(row['volume']), timestamp=timestamp)
+        # 1. Update Engine
+        engine.update(symbol, price, int(row['volume']), timestamp=timestamp)
+        if idx % 100 == 0: engine.set_vix(20.0, timestamp)
         
-        # Simulate VIX update (since we don't have historical VIX in this feed)
-        if idx % 100 == 0: engine.set_vix(20.0, timestamp) # Safe/Neutral VIX
-        
-        # 2. Check Signals
+        # 2. Check Exits (All strategies except Scalper exit at EOD)
+        # Scalper exits on RSI reversal
+        for trade in open_trades[:]:
+            should_close = False
+            
+            # EOD Exit (Hard stop for all day trades at 15:55)
+            if timestamp.hour == 15 and timestamp.minute >= 55:
+                should_close = True
+            
+            # Scalper Specific Exit (Mean Reversion)
+            if trade.strategy == 'SCALPER':
+                rsi_now = engine.get_rsi(symbol, period=2)
+                if trade.side == 'LONG' and rsi_now > 50:
+                    should_close = True
+                elif trade.side == 'SHORT' and rsi_now < 50:
+                    should_close = True
+            
+            if should_close:
+                trade.close(price, timestamp)
+                accountant.close_trade(trade)
+                open_trades.remove(trade)
+
+        # 3. Check Signals
         indicators = engine.get_indicators(symbol)
         is_warm = indicators.get('is_warm', False)
         
@@ -202,122 +258,92 @@ async def run_backtest(symbol: str = 'SPY', days: int = 20):
             warmup_complete_at = idx
             print(f"✅ Warmup complete at {timestamp}")
 
-        # Check cooldown (prevent duplicate signals within min interval)
-        if symbol in last_proposal_time:
-            if timestamp - last_proposal_time[symbol] < min_proposal_interval:
-                # Skip this candle - too soon since last signal
-                if (idx + 1) % 5000 == 0:
-                    print(f"📊 Progress: {(idx+1)/len(df)*100:.1f}%")
-                continue
-        
-        # Get current date for daily signal tracking
+        # Signal Deduplication
         current_date = timestamp.date()
-        if current_date not in daily_signals:
-            daily_signals[current_date] = {}
+        if current_date not in daily_signals: daily_signals[current_date] = {}
         
         signal = None
         strategy = None
+        side = None
         
-        # A. ORB Strategy (Runs BEFORE Warmup)
-        # Window: 10:00 - 11:30 AM, only fire ONCE per day on FIRST breakout
+        # A. ORB
         if timestamp.hour == 10 or (timestamp.hour == 11 and timestamp.minute < 30):
-            orb_key = f"{symbol}_ORB_{current_date}"
+            orb_key = f"ORB_{current_date}"
             if orb_key not in daily_signals[current_date]:
                 orb = engine.get_opening_range(symbol)
                 if orb['complete']:
-                    price = indicators['price']
-                    velocity = indicators.get('volume_velocity', 1.0)
-                    if price > orb['high'] and velocity > 1.5:
-                        signal = 'ORB_BREAKOUT_BULL'
+                    if price > orb['high']:
+                        signal = 'ORB_BULL'
                         strategy = 'ORB'
+                        side = 'LONG'
                         daily_signals[current_date][orb_key] = True
-                    elif price < orb['low'] and velocity > 1.5:
-                        signal = 'ORB_BREAKOUT_BEAR'
+                    elif price < orb['low']:
+                        signal = 'ORB_BEAR'
                         strategy = 'ORB'
+                        side = 'SHORT'
                         daily_signals[current_date][orb_key] = True
 
-        # B. Range Farmer (Iron Condor)
-        # Trigger: 1:00 PM if ADX < 20, only ONCE per day
+        # B. Farmer
         if not signal and timestamp.hour == 13 and 0 <= timestamp.minute < 5:
-            farmer_key = f"{symbol}_FARMER_{current_date}"
+            farmer_key = f"FARMER_{current_date}"
             if farmer_key not in daily_signals[current_date]:
                 adx = engine.get_adx(symbol)
                 if adx < 20:
-                    signal = 'IRON_CONDOR'
+                    signal = 'CONDOR'
                     strategy = 'FARMER'
+                    side = 'NEUTRAL'
                     daily_signals[current_date][farmer_key] = True
 
-        # C. Scalper (All Day)
-        # Trigger: RSI(2) Extreme, with cooldown check
+        # C. Scalper (Cooldown 5 mins)
         if not signal:
             rsi_2 = engine.get_rsi(symbol, period=2)
             if rsi_2 is not None:
-                last_signal = last_signals.get(symbol, {})
-                # Only fire if different from last signal or > 5 minutes ago
-                if (rsi_2 < 5 and (last_signal.get('signal') != 'SCALP_BULL' or 
-                    (timestamp - last_signal.get('timestamp', timestamp)).seconds > 300)):
+                last_sig = last_signals.get(symbol, {})
+                time_since = (timestamp - last_sig.get('timestamp', timestamp)).seconds if last_sig.get('timestamp') else 999
+                
+                if rsi_2 < 5 and (last_sig.get('signal') != 'SCALP_BULL' or time_since > 300):
                     signal = 'SCALP_BULL'
                     strategy = 'SCALPER'
-                elif (rsi_2 > 95 and (last_signal.get('signal') != 'SCALP_BEAR' or 
-                      (timestamp - last_signal.get('timestamp', timestamp)).seconds > 300)):
+                    side = 'LONG'
+                elif rsi_2 > 95 and (last_sig.get('signal') != 'SCALP_BEAR' or time_since > 300):
                     signal = 'SCALP_BEAR'
                     strategy = 'SCALPER'
+                    side = 'SHORT'
 
-        # D. Trend Strategy (Requires Warmup)
+        # D. Trend
         if not signal and is_warm:
             trend = indicators['trend']
             rsi = indicators['rsi']
             flow = indicators['flow_state']
             
-            last = last_signals.get(symbol, {})
-            # Prevent duplicate trend signals within 5 minutes
-            time_since_last = (timestamp - last.get('timestamp', timestamp)).seconds if last.get('timestamp') else 999
+            last_sig = last_signals.get(symbol, {})
+            time_since = (timestamp - last_sig.get('timestamp', timestamp)).seconds if last_sig.get('timestamp') else 999
             
-            if trend == 'UPTREND' and rsi < 30 and flow != 'NEUTRAL' and time_since_last > 300:
+            if trend == 'UPTREND' and rsi < 30 and flow != 'NEUTRAL' and time_since > 300:
                 signal = 'TREND_BULL'
                 strategy = 'TREND'
-            elif trend == 'DOWNTREND' and rsi > 70 and flow != 'NEUTRAL' and time_since_last > 300:
+                side = 'LONG'
+            elif trend == 'DOWNTREND' and rsi > 70 and flow != 'NEUTRAL' and time_since > 300:
                 signal = 'TREND_BEAR'
                 strategy = 'TREND'
-        
-        # Log signal if detected
+                side = 'SHORT'
+
+        # Execute Signal
         if signal:
-            signal_count += 1
-            last_proposal_time[symbol] = timestamp
             last_signals[symbol] = {'signal': signal, 'timestamp': timestamp}
             
-            # Format output based on strategy
-            if strategy == 'ORB':
-                orb = engine.get_opening_range(symbol)
-                if signal == 'ORB_BREAKOUT_BULL':
-                    print(f"🎯 [ORB BULL] Breakout > {orb['high']:.2f} at {timestamp}")
-                else:
-                    print(f"🎯 [ORB BEAR] Breakout < {orb['low']:.2f} at {timestamp}")
-            elif strategy == 'FARMER':
-                adx = engine.get_adx(symbol)
-                print(f"🚜 [FARMER] Iron Condor Setup (ADX {adx:.1f}) at {timestamp}")
-            elif strategy == 'SCALPER':
-                rsi_2 = engine.get_rsi(symbol, period=2)
-                if signal == 'SCALP_BULL':
-                    print(f"⚡ [SCALP BULL] RSI(2) {rsi_2:.1f} (Oversold) at {timestamp}")
-                else:
-                    print(f"⚡ [SCALP BEAR] RSI(2) {rsi_2:.1f} (Overbought) at {timestamp}")
-            elif strategy == 'TREND':
-                if signal == 'TREND_BULL':
-                    print(f"📈 [TREND BULL] Dip Buy in Uptrend at {timestamp}")
-                else:
-                    print(f"📉 [TREND BEAR] Rip Sell in Downtrend at {timestamp}")
+            # Create Trade
+            trade = BacktestTrade(symbol, strategy, side, price, timestamp)
+            open_trades.append(trade)
+            accountant.log_trade(trade)
 
-        # Progress Log
         if (idx + 1) % 5000 == 0:
-            print(f"📊 Progress: {(idx+1)/len(df)*100:.1f}%")
+            print(f"📊 Progress: {(idx+1)/len(df)*100:.1f}%", flush=True)
 
-    print(f"\n{'='*60}")
-    print(f"Total Signals Detected: {signal_count}")
-    print(f"{'='*60}\n")
+    print(accountant.get_summary())
 
 if __name__ == "__main__":
     import sys
     symbol = sys.argv[1] if len(sys.argv) > 1 else 'SPY'
-    days = int(sys.argv[2]) if len(sys.argv) > 2 else 10 # Default to 10 days safe limit
+    days = int(sys.argv[2]) if len(sys.argv) > 2 else 20
     asyncio.run(run_backtest(symbol, days))
