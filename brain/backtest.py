@@ -98,23 +98,27 @@ async def fetch_historical_data(symbol: str, days: int = 20) -> pd.DataFrame:
     # CORRECTED ENDPOINT: Use 'timesales' for intraday data
     base_url = f'{TRADIER_API_BASE}/markets/timesales'
     
-    # Build URL with query parameters using yarl (aiohttp's URL library)
-    # This properly handles encoding and avoids duplicate keys issues
-    from yarl import URL
+    # Build URL manually with proper encoding to avoid aiohttp duplicate keys issue
+    from urllib.parse import quote
     start_str = start_date.strftime('%Y-%m-%d %H:%M')
     end_str = end_date.strftime('%Y-%m-%d %H:%M')
     
-    request_url = URL(base_url).with_query(
-        symbol=symbol,
-        interval='1min',
-        start=start_str,
-        end=end_str,
-        session_filter='all'
-    )
+    # Manually construct query string with proper encoding
+    query_parts = [
+        f'symbol={quote(symbol)}',
+        f'interval={quote("1min")}',
+        f'start={quote(start_str)}',
+        f'end={quote(end_str)}',
+        f'session_filter={quote("all")}'
+    ]
+    query_string = '&'.join(query_parts)
+    full_url = f'{base_url}?{query_string}'
+    
+    print(f"🔗 Request URL: {full_url[:100]}...")  # Print first 100 chars for debugging
     
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(str(request_url), headers=headers) as resp:
+            async with session.get(full_url, headers=headers) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     series = data.get('series', {}).get('data', [])
