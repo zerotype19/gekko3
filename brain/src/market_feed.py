@@ -408,6 +408,62 @@ class MarketFeed:
                     bias = 'bearish'
                     logging.info(f"🎯 ORB BEAR Signal: {symbol} broke below ${orb['low']:.2f} @ ${current_price:.2f} (Vol: {vol_velocity:.2f})")
         
+        # --- STRATEGY 2: THE RANGE FARMER (Iron Condor) ---
+        # Objective: Monetize boring days.
+        # Trigger: 1:00 PM ET if Trend Strength (ADX) is weak (< 20).
+        if not signal and current_hour == 13 and 0 <= current_minute < 5:  # 5-minute window to fire
+            adx = self.alpha_engine.get_adx(symbol)
+            
+            # ADX < 20 means "No Trend" / Choppy
+            if adx < 20:
+                logging.info(f"🚜 RANGE FARMER: {symbol} ADX is {adx:.2f} (Weak Trend). Farming volatility.")
+                
+                # Fire BOTH sides to create an Iron Condor
+                # 1. Sell Call Spread (Bearish side)
+                await self._send_proposal(symbol, 'IRON_CONDOR_LEG', 'OPEN', 'CALL', indicators, 'neutral')
+                
+                # 2. Sell Put Spread (Bullish side)
+                await self._send_proposal(symbol, 'IRON_CONDOR_LEG', 'OPEN', 'PUT', indicators, 'neutral')
+                
+                # Prevent re-firing
+                self.last_proposal_time[symbol] = now
+                return
+
+        # --- STRATEGY 3: THE SCALPER (0DTE Gamma Scalp) ---
+        # Objective: Quick cash on intraday extremes.
+        # Trigger: RSI(2) Extreme (<5 or >95).
+        # Expiration: TODAY (0DTE).
+        if not signal:
+            rsi_2 = self.alpha_engine.get_rsi(symbol, period=2)  # Hypersensitive RSI
+            
+            if rsi_2 < 5 or rsi_2 > 95:
+                # Check if 0DTE options exist for today
+                zero_dte_date = await self._get_0dte_expiration(symbol)
+                
+                if zero_dte_date:
+                    scalp_signal = None
+                    scalp_type = None
+                    scalp_bias = None
+                    
+                    if rsi_2 < 5:  # Oversold -> Bounce -> Sell Put Spread
+                        scalp_signal = 'SCALP_BULL_PUT'
+                        scalp_type = 'PUT'
+                        scalp_bias = 'bullish'
+                    elif rsi_2 > 95:  # Overbought -> Dip -> Sell Call Spread
+                        scalp_signal = 'SCALP_BEAR_CALL'
+                        scalp_type = 'CALL'
+                        scalp_bias = 'bearish'
+                    
+                    if scalp_signal:
+                        logging.info(f"⚡ SCALPER: {symbol} RSI(2) is {rsi_2:.1f}. Firing 0DTE {scalp_type}.")
+                        await self._send_proposal(
+                            symbol, 'CREDIT_SPREAD', 'OPEN', scalp_type, indicators, scalp_bias,
+                            force_expiration=zero_dte_date  # Force 0DTE
+                        )
+                        # Note: We rely on standard de-duplication to prevent spamming this every second
+                        self.last_signals[symbol] = {'signal': scalp_signal, 'timestamp': now}
+                        return
+        
         # --- WARMUP GUARD (For Main Strategy) ---
         # If we didn't get an ORB signal, we must respect the 200-minute warmup
         if not signal:
@@ -639,6 +695,15 @@ class MarketFeed:
         
         return best_expiration
 
+    async def _get_0dte_expiration(self, symbol: str) -> Optional[str]:
+        """Find an expiration date that is TODAY (Zero Days to Expiration)"""
+        expirations = await self._get_expirations(symbol)
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        
+        if today_str in expirations:
+            return today_str
+        return None
+
     async def _get_option_chain(self, symbol: str, expiration: str) -> list:
         """
         Fetch option chain from Tradier API for a specific expiration
@@ -694,15 +759,19 @@ class MarketFeed:
         side: str,
         option_type: str,
         indicators: dict,
-        bias: str
+        bias: str,
+        force_expiration: Optional[str] = None
     ):
         """Send a trade proposal to the Gatekeeper using real option chain data"""
         from datetime import datetime, timedelta
         
         current_price = indicators['price']
         
-        # Find best expiration (14-45 DTE, prefers 30 DTE)
-        expiration_str = await self._get_best_expiration(symbol)
+        # Find best expiration (14-45 DTE, prefers 30 DTE) or use override
+        if force_expiration:
+            expiration_str = force_expiration  # USE OVERRIDE IF PROVIDED
+        else:
+            expiration_str = await self._get_best_expiration(symbol)
         
         if not expiration_str:
             logging.error(f"❌ Could not find suitable expiration for {symbol}. Aborting proposal.")

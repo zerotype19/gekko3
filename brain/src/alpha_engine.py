@@ -409,6 +409,43 @@ class AlphaEngine:
         """Get current VIX value"""
         return self.current_vix
 
+    def _calculate_adx(self, symbol: str, period: int = 14) -> float:
+        """Calculate Average Directional Index (ADX) to measure trend strength"""
+        if self.candles[symbol].empty or len(self.candles[symbol]) < period * 2:
+            return 25.0  # Default to 'Trending' (Safe mode) to prevent bad Iron Condors
+
+        df = self.candles[symbol].copy()
+        
+        # Calculate True Range (TR)
+        df['h-l'] = df['high'] - df['low']
+        df['h-pc'] = abs(df['high'] - df['close'].shift(1))
+        df['l-pc'] = abs(df['low'] - df['close'].shift(1))
+        df['tr'] = df[['h-l', 'h-pc', 'l-pc']].max(axis=1)
+
+        # Calculate Directional Movement (DM)
+        df['up_move'] = df['high'] - df['high'].shift(1)
+        df['down_move'] = df['low'].shift(1) - df['low']
+        
+        df['plus_dm'] = np.where((df['up_move'] > df['down_move']) & (df['up_move'] > 0), df['up_move'], 0)
+        df['minus_dm'] = np.where((df['down_move'] > df['up_move']) & (df['down_move'] > 0), df['down_move'], 0)
+
+        # Wilder's Smoothing
+        # (Simplified EWMA for performance matching Wilder's)
+        alpha = 1 / period
+        df['tr_smooth'] = df['tr'].ewm(alpha=alpha, adjust=False).mean()
+        df['plus_di'] = 100 * (df['plus_dm'].ewm(alpha=alpha, adjust=False).mean() / df['tr_smooth'])
+        df['minus_di'] = 100 * (df['minus_dm'].ewm(alpha=alpha, adjust=False).mean() / df['tr_smooth'])
+
+        # Calculate DX and ADX
+        df['dx'] = 100 * abs(df['plus_di'] - df['minus_di']) / (df['plus_di'] + df['minus_di'])
+        df['adx'] = df['dx'].ewm(alpha=alpha, adjust=False).mean()
+
+        return float(df['adx'].iloc[-1])
+
+    def get_adx(self, symbol: str) -> float:
+        """Get ADX for a symbol"""
+        return self._calculate_adx(symbol)
+
     def get_opening_range(self, symbol: str) -> Dict:
         """
         Get the opening range (9:30 AM - 10:00 AM ET) high and low
