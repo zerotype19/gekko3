@@ -128,17 +128,32 @@ async def fetch_historical_data(symbol: str, days: int = 20) -> pd.DataFrame:
             # Convert to DataFrame
             df = pd.DataFrame(series)
             
-            # Rename columns to match AlphaEngine expectations
+            # FIX: Handle column collision. Tradier returns both 'time' and 'timestamp'.
+            # We want 'time' (the ISO string) to become our main 'timestamp' column.
             if 'time' in df.columns:
-                df.rename(columns={'time': 'timestamp'}, inplace=True)
+                df['timestamp'] = pd.to_datetime(df['time'])
+                # Drop original 'time' column to avoid confusion
+                df = df.drop(columns=['time'], errors='ignore')
+            elif 'timestamp' in df.columns:
+                # If only 'timestamp' exists (unix integer), convert it
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s', errors='coerce')
             
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            # Explicitly select and order columns to remove any API noise
+            # This fixes the "Duplicate Keys" error by forcing a clean selection
+            wanted_cols = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+            # Ensure all exist, fill missing with defaults
+            for c in wanted_cols:
+                if c not in df.columns:
+                    if c == 'timestamp':
+                        continue  # Skip timestamp if we're creating it
+                    df[c] = 0.0
+            
+            # Select only the columns we want (this removes any duplicates)
+            df = df[wanted_cols].copy()
             
             # Ensure numeric types
-            cols = ['open', 'high', 'low', 'close', 'volume']
-            for col in cols:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            numeric_cols = ['open', 'high', 'low', 'close', 'volume']
+            df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors='coerce')
             
             df = df.sort_values('timestamp')
             print(f"✅ Loaded {len(df)} candles from Tradier Production API")
@@ -148,6 +163,8 @@ async def fetch_historical_data(symbol: str, days: int = 20) -> pd.DataFrame:
             return create_placeholder_data(symbol, days)
     except Exception as e:
         print(f"⚠️  Connection Error: {e}")
+        import traceback
+        traceback.print_exc()
         return create_placeholder_data(symbol, days)
 
 
