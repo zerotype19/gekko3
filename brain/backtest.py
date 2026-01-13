@@ -232,7 +232,10 @@ async def run_backtest(symbol: str = 'SPY', days: int = 20):
         timestamp = pd.to_datetime(row['timestamp'])
         
         # Feed the engine (simulating real-time updates)
-        engine.update(symbol, float(row['close']), int(row['volume']))
+        # AlphaEngine.update expects: symbol, price, volume
+        price = float(row['close'])
+        volume = int(row.get('volume', 0))
+        engine.update(symbol, price, volume)
         
         # Update VIX periodically (simulate VIX poller)
         if idx % 100 == 0:  # Every 100 candles, update VIX
