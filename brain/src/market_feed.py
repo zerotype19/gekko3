@@ -64,6 +64,34 @@ class MarketFeed:
         self.vix_poller_task: Optional[asyncio.Task] = None
         self.vix_poller_running = False
         
+        # Dashboard state export
+        self.state_file = 'brain_state.json'
+    
+    def export_state(self):
+        """Dumps current brain state to JSON for the dashboard"""
+        state = {}
+        for symbol in self.symbols:
+            inds = self.alpha_engine.get_indicators(symbol)
+            state[symbol] = {
+                'price': inds.get('price', 0),
+                'rsi': inds.get('rsi', 50),
+                'adx': self.alpha_engine.get_adx(symbol),
+                'trend': inds.get('trend', 'UNKNOWN'),
+                'flow': inds.get('flow_state', 'NEUTRAL'),
+                'vix': inds.get('vix', 0),
+                'volume_velocity': inds.get('volume_velocity', 1.0),
+                'candle_count': inds.get('candle_count', 0),
+                'is_warm': inds.get('is_warm', False),
+                'timestamp': datetime.now().isoformat()
+            }
+        
+        # Save to a file in the brain directory
+        try:
+            with open(self.state_file, 'w') as f:
+                json.dump(state, f, indent=2)
+        except Exception as e:
+            logging.error(f"Failed to export state: {e}")
+        
         self.notifier = get_notifier()
 
     # --- VIX Polling ---
