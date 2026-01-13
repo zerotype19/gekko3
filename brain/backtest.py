@@ -97,59 +97,55 @@ async def fetch_historical_data(symbol: str, days: int = 20) -> pd.DataFrame:
     print(f"📥 Fetching {safe_days} days of 1-min data for {symbol} (Tradier Limit)...")
     
     # CORRECTED ENDPOINT: Use 'timesales' for intraday data
-    base_url = f'{TRADIER_API_BASE}/markets/timesales'
+    url = f'{TRADIER_API_BASE}/markets/timesales'
     
-    # Build URL manually with proper encoding to avoid aiohttp duplicate keys issue
-    from urllib.parse import quote
+    # Format dates for Tradier API
     start_str = start_date.strftime('%Y-%m-%d %H:%M')
     end_str = end_date.strftime('%Y-%m-%d %H:%M')
     
-    # Manually construct query string with proper encoding
-    query_parts = [
-        f'symbol={quote(symbol)}',
-        f'interval={quote("1min")}',
-        f'start={quote(start_str)}',
-        f'end={quote(end_str)}',
-        f'session_filter={quote("all")}'
-    ]
-    query_string = '&'.join(query_parts)
-    full_url = f'{base_url}?{query_string}'
-    
-    print(f"🔗 Request URL: {full_url[:100]}...")  # Print first 100 chars for debugging
+    # Use requests library instead of aiohttp to avoid duplicate keys issue
+    # This is a simple GET request, so requests is sufficient
+    params = {
+        'symbol': symbol,
+        'interval': '1min',
+        'start': start_str,
+        'end': end_str,
+        'session_filter': 'all'
+    }
     
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(full_url, headers=headers) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    series = data.get('series', {}).get('data', [])
-                    
-                    if not series:
-                        print("⚠️  No data returned. Market might be closed or symbol invalid.")
-                        return create_placeholder_data(symbol, days)
-                    
-                    # Convert to DataFrame
-                    df = pd.DataFrame(series)
-                    
-                    # Rename columns to match AlphaEngine expectations
-                    if 'time' in df.columns:
-                        df.rename(columns={'time': 'timestamp'}, inplace=True)
-                    
-                    df['timestamp'] = pd.to_datetime(df['timestamp'])
-                    
-                    # Ensure numeric types
-                    cols = ['open', 'high', 'low', 'close', 'volume']
-                    for col in cols:
-                        if col in df.columns:
-                            df[col] = pd.to_numeric(df[col], errors='coerce')
-                    
-                    df = df.sort_values('timestamp')
-                    print(f"✅ Loaded {len(df)} candles from Tradier Production API")
-                    return df
-                else:
-                    text = await resp.text()
-                    print(f"⚠️  API Error {resp.status}: {text}")
-                    return create_placeholder_data(symbol, days)
+        # Use requests (synchronous) to avoid aiohttp URL parsing issues
+        resp = requests.get(url, headers=headers, params=params, timeout=30)
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            series = data.get('series', {}).get('data', [])
+            
+            if not series:
+                print("⚠️  No data returned. Market might be closed or symbol invalid.")
+                return create_placeholder_data(symbol, days)
+            
+            # Convert to DataFrame
+            df = pd.DataFrame(series)
+            
+            # Rename columns to match AlphaEngine expectations
+            if 'time' in df.columns:
+                df.rename(columns={'time': 'timestamp'}, inplace=True)
+            
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            
+            # Ensure numeric types
+            cols = ['open', 'high', 'low', 'close', 'volume']
+            for col in cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            df = df.sort_values('timestamp')
+            print(f"✅ Loaded {len(df)} candles from Tradier Production API")
+            return df
+        else:
+            print(f"⚠️  API Error {resp.status_code}: {resp.text[:200]}")
+            return create_placeholder_data(symbol, days)
     except Exception as e:
         print(f"⚠️  Connection Error: {e}")
         return create_placeholder_data(symbol, days)
