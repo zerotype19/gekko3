@@ -177,6 +177,14 @@ async def run_backtest(symbol: str = 'SPY', days: int = 20):
     signal_count = 0
     warmup_complete_at = None
     
+    # Signal deduplication (match production logic)
+    last_proposal_time = {}  # {symbol: datetime}
+    last_signals = {}  # {symbol: {'signal': str, 'timestamp': datetime}}
+    min_proposal_interval = timedelta(minutes=1)  # Minimum time between proposals
+    
+    # Track daily signals to prevent duplicates
+    daily_signals = {}  # {date: {strategy: bool}} to track if strategy fired today
+    
     for idx, row in df.iterrows():
         timestamp = pd.to_datetime(row['timestamp'])
         
