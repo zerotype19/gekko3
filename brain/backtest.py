@@ -240,20 +240,51 @@ async def run_backtest(symbol: str = 'SPY', days: int = 20):
         # Check signals (simplified version - you can import from market_feed)
         indicators = engine.get_indicators(symbol)
         
-        # Example signal checks (simplified)
-        if indicators.get('is_warm', False):
+        # Log warmup progress
+        candle_count = indicators.get('candle_count', 0)
+        is_warm = indicators.get('is_warm', False)
+        
+        if not is_warm:
+            # Log warmup progress occasionally
+            if candle_count > 0 and candle_count % 500 == 0:
+                print(f"⏳ Warmup: {candle_count}/200 candles")
+        else:
+            # System is warm - check for signals
             rsi = indicators.get('rsi', 50)
+            rsi_2 = engine.get_rsi(symbol, period=2)
             trend = indicators.get('trend', 'UNKNOWN')
+            flow = indicators.get('flow_state', 'NEUTRAL')
+            adx = engine.get_adx(symbol)
+            vix = indicators.get('vix', 0)
             
-            # Log significant events
+            # Log significant events periodically
             if idx % 1000 == 0:  # Every 1000 candles
                 print(f"⏱️  {timestamp.strftime('%Y-%m-%d %H:%M')} | "
-                      f"Price: ${row['close']:.2f} | RSI: {rsi:.1f} | Trend: {trend}")
+                      f"Price: ${row['close']:.2f} | RSI: {rsi:.1f} | RSI(2): {rsi_2:.1f} | "
+                      f"Trend: {trend} | ADX: {adx:.1f} | VIX: {vix:.1f}")
             
-            # Example: RSI extreme signal
-            if rsi < 5 or rsi > 95:
+            # Signal checks (matching market_feed.py logic)
+            # 1. Scalper (0DTE) - RSI(2) extremes
+            if rsi_2 is not None and (rsi_2 < 5 or rsi_2 > 95):
                 signal_count += 1
-                print(f"⚡ [SIGNAL #{signal_count}] RSI Extreme: {rsi:.1f} at {timestamp}")
+                signal_type = "SCALP_BULL_PUT" if rsi_2 < 5 else "SCALP_BEAR_CALL"
+                print(f"⚡ [SIGNAL #{signal_count}] {signal_type}: RSI(2) {rsi_2:.1f} at {timestamp}")
+                # Note: In full backtest, we would call MockGatekeeper.send_proposal here
+            
+            # 2. Trend Strategy - UPTREND/DOWNTREND with RSI
+            elif trend == 'UPTREND' and rsi < 30 and flow != 'NEUTRAL':
+                signal_count += 1
+                print(f"🎯 [SIGNAL #{signal_count}] BULL_PUT_SPREAD: Trend={trend}, RSI={rsi:.1f} at {timestamp}")
+            elif trend == 'DOWNTREND' and rsi > 70 and flow != 'NEUTRAL':
+                signal_count += 1
+                print(f"🎯 [SIGNAL #{signal_count}] BEAR_CALL_SPREAD: Trend={trend}, RSI={rsi:.1f} at {timestamp}")
+            
+            # 3. Range Farmer (Iron Condor) - ADX < 20 at 1:00 PM
+            current_hour = timestamp.hour
+            current_minute = timestamp.minute
+            if current_hour == 13 and 0 <= current_minute < 5 and adx < 20:
+                signal_count += 1
+                print(f"🚜 [SIGNAL #{signal_count}] IRON_CONDOR: ADX {adx:.1f} at {timestamp}")
         
         # Progress indicator
         if (idx + 1) % 5000 == 0:
