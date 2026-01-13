@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List
 from urllib.parse import urlencode
 import aiohttp
+import requests
 import os
 from dotenv import load_dotenv
 
