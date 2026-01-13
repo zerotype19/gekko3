@@ -13,12 +13,19 @@ export const CONSTITUTION: RiskConfig = {
   // Strategy: Only credit spreads are permitted
   allowedStrategies: ['CREDIT_SPREAD'] as const,
 
-  // Risk Limits (INCREASED FOR TESTING)
+    // Risk Limits (INCREASED FOR TESTING)
   maxOpenPositions: 20,          // Increased to 20 for testing
   maxConcentrationPerSymbol: 20, // Increased to 20 for testing
   maxDailyLossPercent: 0.02,    // Keeps 2% hard stop (Safety First).
 
+  // DTE Limits (NEW)
+  minDte: 0,    // Allows Scalper (0DTE)
+  maxDte: 60,   // Allows Trend/Farmer (30-45 DTE)
+
   // Execution Constraints
+
+  
+  
   staleProposalMs: 10000,       // Reject orders older than 10 seconds
   forceEodCloseEt: '15:45',     // Hard close at 3:45 PM ET
 };
