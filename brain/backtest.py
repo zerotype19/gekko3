@@ -202,52 +202,111 @@ async def run_backtest(symbol: str = 'SPY', days: int = 20):
             warmup_complete_at = idx
             print(f"✅ Warmup complete at {timestamp}")
 
-        # --- STRATEGY LOGIC (Mirrors market_feed.py) ---
+        # Check cooldown (prevent duplicate signals within min interval)
+        if symbol in last_proposal_time:
+            if timestamp - last_proposal_time[symbol] < min_proposal_interval:
+                # Skip this candle - too soon since last signal
+                if (idx + 1) % 5000 == 0:
+                    print(f"📊 Progress: {(idx+1)/len(df)*100:.1f}%")
+                continue
+        
+        # Get current date for daily signal tracking
+        current_date = timestamp.date()
+        if current_date not in daily_signals:
+            daily_signals[current_date] = {}
+        
+        signal = None
+        strategy = None
         
         # A. ORB Strategy (Runs BEFORE Warmup)
-        # Window: 10:00 - 11:30 AM
+        # Window: 10:00 - 11:30 AM, only fire ONCE per day on FIRST breakout
         if timestamp.hour == 10 or (timestamp.hour == 11 and timestamp.minute < 30):
-            orb = engine.get_opening_range(symbol)
-            if orb['complete']:
-                price = indicators['price']
-                if price > orb['high']:
-                    signal_count += 1
-                    print(f"🎯 [ORB BULL] Breakout > {orb['high']:.2f} at {timestamp}")
-                elif price < orb['low']:
-                    signal_count += 1
-                    print(f"🎯 [ORB BEAR] Breakout < {orb['low']:.2f} at {timestamp}")
+            orb_key = f"{symbol}_ORB_{current_date}"
+            if orb_key not in daily_signals[current_date]:
+                orb = engine.get_opening_range(symbol)
+                if orb['complete']:
+                    price = indicators['price']
+                    velocity = indicators.get('volume_velocity', 1.0)
+                    if price > orb['high'] and velocity > 1.5:
+                        signal = 'ORB_BREAKOUT_BULL'
+                        strategy = 'ORB'
+                        daily_signals[current_date][orb_key] = True
+                    elif price < orb['low'] and velocity > 1.5:
+                        signal = 'ORB_BREAKOUT_BEAR'
+                        strategy = 'ORB'
+                        daily_signals[current_date][orb_key] = True
 
         # B. Range Farmer (Iron Condor)
-        # Trigger: 1:00 PM if ADX < 20
-        if timestamp.hour == 13 and 0 <= timestamp.minute < 5:
-            adx = engine.get_adx(symbol)
-            if adx < 20:
-                signal_count += 1
-                print(f"🚜 [FARMER] Iron Condor Setup (ADX {adx:.1f}) at {timestamp}")
+        # Trigger: 1:00 PM if ADX < 20, only ONCE per day
+        if not signal and timestamp.hour == 13 and 0 <= timestamp.minute < 5:
+            farmer_key = f"{symbol}_FARMER_{current_date}"
+            if farmer_key not in daily_signals[current_date]:
+                adx = engine.get_adx(symbol)
+                if adx < 20:
+                    signal = 'IRON_CONDOR'
+                    strategy = 'FARMER'
+                    daily_signals[current_date][farmer_key] = True
 
         # C. Scalper (All Day)
-        # Trigger: RSI(2) Extreme
-        rsi_2 = engine.get_rsi(symbol, period=2)
-        if rsi_2 is not None:
-            if rsi_2 < 5:
-                signal_count += 1
-                print(f"⚡ [SCALP BULL] RSI(2) {rsi_2:.1f} (Oversold) at {timestamp}")
-            elif rsi_2 > 95:
-                signal_count += 1
-                print(f"⚡ [SCALP BEAR] RSI(2) {rsi_2:.1f} (Overbought) at {timestamp}")
+        # Trigger: RSI(2) Extreme, with cooldown check
+        if not signal:
+            rsi_2 = engine.get_rsi(symbol, period=2)
+            if rsi_2 is not None:
+                last_signal = last_signals.get(symbol, {})
+                # Only fire if different from last signal or > 5 minutes ago
+                if (rsi_2 < 5 and (last_signal.get('signal') != 'SCALP_BULL' or 
+                    (timestamp - last_signal.get('timestamp', timestamp)).seconds > 300)):
+                    signal = 'SCALP_BULL'
+                    strategy = 'SCALPER'
+                elif (rsi_2 > 95 and (last_signal.get('signal') != 'SCALP_BEAR' or 
+                      (timestamp - last_signal.get('timestamp', timestamp)).seconds > 300)):
+                    signal = 'SCALP_BEAR'
+                    strategy = 'SCALPER'
 
         # D. Trend Strategy (Requires Warmup)
-        if is_warm:
+        if not signal and is_warm:
             trend = indicators['trend']
             rsi = indicators['rsi']
             flow = indicators['flow_state']
             
-            if trend == 'UPTREND' and rsi < 30 and flow != 'NEUTRAL':
-                signal_count += 1
-                print(f"📈 [TREND BULL] Dip Buy in Uptrend at {timestamp}")
-            elif trend == 'DOWNTREND' and rsi > 70 and flow != 'NEUTRAL':
-                signal_count += 1
-                print(f"📉 [TREND BEAR] Rip Sell in Downtrend at {timestamp}")
+            last = last_signals.get(symbol, {})
+            # Prevent duplicate trend signals within 5 minutes
+            time_since_last = (timestamp - last.get('timestamp', timestamp)).seconds if last.get('timestamp') else 999
+            
+            if trend == 'UPTREND' and rsi < 30 and flow != 'NEUTRAL' and time_since_last > 300:
+                signal = 'TREND_BULL'
+                strategy = 'TREND'
+            elif trend == 'DOWNTREND' and rsi > 70 and flow != 'NEUTRAL' and time_since_last > 300:
+                signal = 'TREND_BEAR'
+                strategy = 'TREND'
+        
+        # Log signal if detected
+        if signal:
+            signal_count += 1
+            last_proposal_time[symbol] = timestamp
+            last_signals[symbol] = {'signal': signal, 'timestamp': timestamp}
+            
+            # Format output based on strategy
+            if strategy == 'ORB':
+                orb = engine.get_opening_range(symbol)
+                if signal == 'ORB_BREAKOUT_BULL':
+                    print(f"🎯 [ORB BULL] Breakout > {orb['high']:.2f} at {timestamp}")
+                else:
+                    print(f"🎯 [ORB BEAR] Breakout < {orb['low']:.2f} at {timestamp}")
+            elif strategy == 'FARMER':
+                adx = engine.get_adx(symbol)
+                print(f"🚜 [FARMER] Iron Condor Setup (ADX {adx:.1f}) at {timestamp}")
+            elif strategy == 'SCALPER':
+                rsi_2 = engine.get_rsi(symbol, period=2)
+                if signal == 'SCALP_BULL':
+                    print(f"⚡ [SCALP BULL] RSI(2) {rsi_2:.1f} (Oversold) at {timestamp}")
+                else:
+                    print(f"⚡ [SCALP BEAR] RSI(2) {rsi_2:.1f} (Overbought) at {timestamp}")
+            elif strategy == 'TREND':
+                if signal == 'TREND_BULL':
+                    print(f"📈 [TREND BULL] Dip Buy in Uptrend at {timestamp}")
+                else:
+                    print(f"📉 [TREND BEAR] Rip Sell in Downtrend at {timestamp}")
 
         # Progress Log
         if (idx + 1) % 5000 == 0:
