@@ -7,9 +7,6 @@ import pandas as pd
 import asyncio
 import json
 from datetime import datetime, timedelta
-from typing import Dict, List
-from urllib.parse import urlencode
-import aiohttp
 import requests
 import os
 from dotenv import load_dotenv
@@ -48,15 +45,6 @@ class MockGatekeeper:
         print(f"   Context: VIX={proposal.get('context', {}).get('vix', 0):.1f}, "
               f"RSI={proposal.get('context', {}).get('rsi', 0):.1f}, "
               f"Trend={proposal.get('context', {}).get('trend_state', 'unknown')}")
-        
-        # Optionally send to Discord for backtest results
-        try:
-            await self.notifier.send_trade_signal(
-                f"BACKTEST: {proposal['side']} {proposal['symbol']} "
-                f"{proposal['strategy']} @ ${proposal['price']:.2f}"
-            )
-        except:
-            pass  # Don't fail if notification fails
     
     def get_trade_summary(self):
         """Return summary of all trades"""
@@ -78,43 +66,31 @@ class MockGatekeeper:
 async def fetch_historical_data(symbol: str, days: int = 20) -> pd.DataFrame:
     """
     Fetch historical 1-minute candle data from Tradier
-    NOTE: Tradier 'timesales' endpoint has a ~20 day limit for 1-min data.
     """
     access_token = os.getenv('TRADIER_ACCESS_TOKEN', '')
     if not access_token:
         raise ValueError('TRADIER_ACCESS_TOKEN must be set in .env')
     
-    headers = {
-        'Authorization': f'Bearer {access_token}',
-        'Accept': 'application/json'
-    }
+    headers = {'Authorization': f'Bearer {access_token}', 'Accept': 'application/json'}
     
-    # Tradier limits 1-min data to roughly 20 days
+    # Tradier timesales limit is ~20 days for 1min data
     safe_days = min(days, 20)
     end_date = datetime.now()
     start_date = end_date - timedelta(days=safe_days)
     
     print(f"📥 Fetching {safe_days} days of 1-min data for {symbol} (Tradier Limit)...")
     
-    # CORRECTED ENDPOINT: Use 'timesales' for intraday data
     url = f'{TRADIER_API_BASE}/markets/timesales'
-    
-    # Format dates for Tradier API
-    start_str = start_date.strftime('%Y-%m-%d %H:%M')
-    end_str = end_date.strftime('%Y-%m-%d %H:%M')
-    
-    # Use requests library instead of aiohttp to avoid duplicate keys issue
-    # This is a simple GET request, so requests is sufficient
     params = {
         'symbol': symbol,
         'interval': '1min',
-        'start': start_str,
-        'end': end_str,
+        'start': start_date.strftime('%Y-%m-%d %H:%M'),
+        'end': end_date.strftime('%Y-%m-%d %H:%M'),
         'session_filter': 'all'
     }
     
     try:
-        # Use requests (synchronous) to avoid aiohttp URL parsing issues
+        # Use synchronous requests to avoid any async complications in a simple script
         resp = requests.get(url, headers=headers, params=params, timeout=30)
         
         if resp.status_code == 200:
@@ -125,36 +101,31 @@ async def fetch_historical_data(symbol: str, days: int = 20) -> pd.DataFrame:
                 print("⚠️  No data returned. Market might be closed or symbol invalid.")
                 return create_placeholder_data(symbol, days)
             
-            # Convert to DataFrame
-            df = pd.DataFrame(series)
+            # Robust data cleaning to prevent "Duplicate Keys" error
+            clean_data = []
+            for row in series:
+                # Prioritize ISO time string, fallback to unix timestamp
+                ts_val = row.get('time')
+                if ts_val:
+                    ts = pd.to_datetime(ts_val)
+                elif row.get('timestamp'):
+                    ts = pd.to_datetime(row.get('timestamp'), unit='s')
+                else:
+                    continue 
+                
+                clean_data.append({
+                    'timestamp': ts,
+                    'open': float(row.get('open', 0)),
+                    'high': float(row.get('high', 0)),
+                    'low': float(row.get('low', 0)),
+                    'close': float(row.get('close', 0)),
+                    'volume': int(row.get('volume', 0))
+                })
             
-            # FIX: Handle column collision. Tradier returns both 'time' and 'timestamp'.
-            # We want 'time' (the ISO string) to become our main 'timestamp' column.
-            if 'time' in df.columns:
-                df['timestamp'] = pd.to_datetime(df['time'])
-                # Drop original 'time' column to avoid confusion
-                df = df.drop(columns=['time'], errors='ignore')
-            elif 'timestamp' in df.columns:
-                # If only 'timestamp' exists (unix integer), convert it
-                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s', errors='coerce')
-            
-            # Explicitly select and order columns to remove any API noise
-            # This fixes the "Duplicate Keys" error by forcing a clean selection
-            wanted_cols = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
-            # Ensure all exist, fill missing with defaults
-            for c in wanted_cols:
-                if c not in df.columns:
-                    if c == 'timestamp':
-                        continue  # Skip timestamp if we're creating it
-                    df[c] = 0.0
-            
-            # Select only the columns we want (this removes any duplicates)
-            df = df[wanted_cols].copy()
-            
-            # Ensure numeric types
-            numeric_cols = ['open', 'high', 'low', 'close', 'volume']
-            df[numeric_cols] = df[numeric_cols].apply(pd.to_numeric, errors='coerce')
-            
+            df = pd.DataFrame(clean_data)
+            if df.empty:
+                return create_placeholder_data(symbol, days)
+                
             df = df.sort_values('timestamp')
             print(f"✅ Loaded {len(df)} candles from Tradier Production API")
             return df
@@ -163,8 +134,6 @@ async def fetch_historical_data(symbol: str, days: int = 20) -> pd.DataFrame:
             return create_placeholder_data(symbol, days)
     except Exception as e:
         print(f"⚠️  Connection Error: {e}")
-        import traceback
-        traceback.print_exc()
         return create_placeholder_data(symbol, days)
 
 
@@ -176,11 +145,9 @@ def create_placeholder_data(symbol: str, days: int) -> pd.DataFrame:
         end=datetime.now(),
         freq='1min'
     )
-    
-    # Simple random walk for testing
     import numpy as np
     np.random.seed(42)
-    base_price = 450.0  # Example SPY price
+    base_price = 450.0 
     returns = np.random.normal(0, 0.001, len(dates))
     prices = base_price * (1 + returns).cumprod()
     
@@ -192,151 +159,98 @@ def create_placeholder_data(symbol: str, days: int) -> pd.DataFrame:
         'close': prices,
         'volume': np.random.randint(1000000, 5000000, len(dates))
     })
-    
     return df
 
 
 async def run_backtest(symbol: str = 'SPY', days: int = 20):
-    """
-    Run a backtest by replaying historical data through AlphaEngine
-    
-    Args:
-        symbol: Symbol to backtest (default: 'SPY')
-        days: Number of days of history to use (default: 20, max: 20 for 1-min data)
-    """
-    print(f"\n{'='*60}")
-    print(f"🧪 GEKKO3 BACKTESTER")
-    print(f"{'='*60}")
-    print(f"Symbol: {symbol}")
-    print(f"Period: {days} days")
-    print(f"{'='*60}\n")
+    print(f"\n{'='*60}\n🧪 GEKKO3 BACKTESTER\n{'='*60}")
     
     # Initialize components
-    engine = AlphaEngine(lookback_minutes=400)  # Same as production
+    engine = AlphaEngine(lookback_minutes=400) 
     gatekeeper = MockGatekeeper()
     
-    # Fetch historical data
     df = await fetch_historical_data(symbol, days)
-    
-    if df.empty:
-        print("❌ No data available for backtest")
-        return
+    if df.empty: return
     
     print(f"\n▶️  Starting replay of {len(df)} candles...\n")
     
-    # Replay data
     signal_count = 0
     warmup_complete_at = None
     
     for idx, row in df.iterrows():
         timestamp = pd.to_datetime(row['timestamp'])
         
-        # Feed the engine (simulating real-time updates)
-        # AlphaEngine.update expects: symbol, price, volume, timestamp (optional)
-        # CRITICAL: Pass historical timestamp so session detection and bar aggregation work correctly
-        price = float(row['close'])
-        volume = int(row.get('volume', 0))
-        engine.update(symbol, price, volume, timestamp=timestamp)
+        # 1. Feed Engine (Simulate Real-Time)
+        engine.update(symbol, float(row['close']), int(row['volume']), timestamp=timestamp)
         
-        # Update VIX periodically (simulate VIX poller)
-        if idx % 100 == 0:  # Every 100 candles, update VIX
-            # Use a placeholder VIX value for backtesting
-            engine.set_vix(15.0, timestamp)
+        # Simulate VIX update (since we don't have historical VIX in this feed)
+        if idx % 100 == 0: engine.set_vix(20.0, timestamp) # Safe/Neutral VIX
         
-        # Check signals (simplified version - you can import from market_feed)
+        # 2. Check Signals
         indicators = engine.get_indicators(symbol)
-        
-        # Log warmup progress
-        candle_count = indicators.get('candle_count', 0)
         is_warm = indicators.get('is_warm', False)
         
-        # Track when warmup completes
         if is_warm and warmup_complete_at is None:
             warmup_complete_at = idx
-            print(f"✅ Warmup complete at candle {idx} ({timestamp.strftime('%Y-%m-%d %H:%M')})")
+            print(f"✅ Warmup complete at {timestamp}")
+
+        # --- STRATEGY LOGIC (Mirrors market_feed.py) ---
         
-        if not is_warm:
-            # Log warmup progress occasionally
-            if candle_count > 0 and candle_count % 500 == 0:
-                print(f"⏳ Warmup: {candle_count}/200 candles")
-        else:
-            # System is warm - check for signals
-            try:
-                rsi = indicators.get('rsi', 50)
-                rsi_2 = engine.get_rsi(symbol, period=2)
-                trend = indicators.get('trend', 'UNKNOWN')
-                flow = indicators.get('flow_state', 'NEUTRAL')
-                adx = engine.get_adx(symbol)
-                vix = indicators.get('vix', 0)
-                
-                # Log significant events periodically
-                if idx % 1000 == 0:  # Every 1000 candles
-                    print(f"⏱️  {timestamp.strftime('%Y-%m-%d %H:%M')} | "
-                          f"Price: ${row['close']:.2f} | RSI: {rsi:.1f} | RSI(2): {rsi_2:.1f if rsi_2 else 'N/A'} | "
-                          f"Trend: {trend} | ADX: {adx:.1f} | VIX: {vix:.1f} | Flow: {flow}")
-                
-                # Signal checks (matching market_feed.py logic)
-                # 1. Scalper (0DTE) - RSI(2) extremes
-                if rsi_2 is not None and (rsi_2 < 5 or rsi_2 > 95):
+        # A. ORB Strategy (Runs BEFORE Warmup)
+        # Window: 10:00 - 11:30 AM
+        if timestamp.hour == 10 or (timestamp.hour == 11 and timestamp.minute < 30):
+            orb = engine.get_opening_range(symbol)
+            if orb['complete']:
+                price = indicators['price']
+                if price > orb['high']:
                     signal_count += 1
-                    signal_type = "SCALP_BULL_PUT" if rsi_2 < 5 else "SCALP_BEAR_CALL"
-                    print(f"⚡ [SIGNAL #{signal_count}] {signal_type}: RSI(2) {rsi_2:.1f} at {timestamp}")
-                    # Note: In full backtest, we would call MockGatekeeper.send_proposal here
-                
-                # 2. Trend Strategy - UPTREND/DOWNTREND with RSI
-                elif trend == 'UPTREND' and rsi < 30 and flow != 'NEUTRAL':
+                    print(f"🎯 [ORB BULL] Breakout > {orb['high']:.2f} at {timestamp}")
+                elif price < orb['low']:
                     signal_count += 1
-                    print(f"🎯 [SIGNAL #{signal_count}] BULL_PUT_SPREAD: Trend={trend}, RSI={rsi:.1f} at {timestamp}")
-                elif trend == 'DOWNTREND' and rsi > 70 and flow != 'NEUTRAL':
-                    signal_count += 1
-                    print(f"🎯 [SIGNAL #{signal_count}] BEAR_CALL_SPREAD: Trend={trend}, RSI={rsi:.1f} at {timestamp}")
-                
-                # 3. Range Farmer (Iron Condor) - ADX < 20 at 1:00 PM
-                current_hour = timestamp.hour
-                current_minute = timestamp.minute
-                if current_hour == 13 and 0 <= current_minute < 5 and adx < 20:
-                    signal_count += 1
-                    print(f"🚜 [SIGNAL #{signal_count}] IRON_CONDOR: ADX {adx:.1f} at {timestamp}")
-            except Exception as e:
-                # Don't let signal checking errors break the backtest
-                if idx % 1000 == 0:
-                    print(f"⚠️  Error checking signals at {timestamp}: {e}")
-        
-        # Progress indicator
+                    print(f"🎯 [ORB BEAR] Breakout < {orb['low']:.2f} at {timestamp}")
+
+        # B. Range Farmer (Iron Condor)
+        # Trigger: 1:00 PM if ADX < 20
+        if timestamp.hour == 13 and 0 <= timestamp.minute < 5:
+            adx = engine.get_adx(symbol)
+            if adx < 20:
+                signal_count += 1
+                print(f"🚜 [FARMER] Iron Condor Setup (ADX {adx:.1f}) at {timestamp}")
+
+        # C. Scalper (All Day)
+        # Trigger: RSI(2) Extreme
+        rsi_2 = engine.get_rsi(symbol, period=2)
+        if rsi_2 is not None:
+            if rsi_2 < 5:
+                signal_count += 1
+                print(f"⚡ [SCALP BULL] RSI(2) {rsi_2:.1f} (Oversold) at {timestamp}")
+            elif rsi_2 > 95:
+                signal_count += 1
+                print(f"⚡ [SCALP BEAR] RSI(2) {rsi_2:.1f} (Overbought) at {timestamp}")
+
+        # D. Trend Strategy (Requires Warmup)
+        if is_warm:
+            trend = indicators['trend']
+            rsi = indicators['rsi']
+            flow = indicators['flow_state']
+            
+            if trend == 'UPTREND' and rsi < 30 and flow != 'NEUTRAL':
+                signal_count += 1
+                print(f"📈 [TREND BULL] Dip Buy in Uptrend at {timestamp}")
+            elif trend == 'DOWNTREND' and rsi > 70 and flow != 'NEUTRAL':
+                signal_count += 1
+                print(f"📉 [TREND BEAR] Rip Sell in Downtrend at {timestamp}")
+
+        # Progress Log
         if (idx + 1) % 5000 == 0:
-            progress = ((idx + 1) / len(df)) * 100
-            print(f"📊 Progress: {progress:.1f}% ({idx + 1}/{len(df)} candles)")
-    
-    # Print warmup summary
-    if warmup_complete_at is not None:
-        print(f"\n📈 Warmup completed at candle {warmup_complete_at} ({warmup_complete_at/len(df)*100:.1f}% through data)")
-    else:
-        print(f"\n⚠️  System never reached warm state (needs 200 candles, got {len(df)})")
-    
-    # Print summary
+            print(f"📊 Progress: {(idx+1)/len(df)*100:.1f}%")
+
     print(f"\n{'='*60}")
-    print(gatekeeper.get_trade_summary())
     print(f"Total Signals Detected: {signal_count}")
     print(f"{'='*60}\n")
-    
-    # Save results
-    results_file = f'backtest_results_{symbol}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
-    with open(results_file, 'w') as f:
-        json.dump({
-            'symbol': symbol,
-            'days': days,
-            'total_candles': len(df),
-            'signals_detected': signal_count,
-            'trades': gatekeeper.trades
-        }, f, indent=2)
-    
-    print(f"💾 Results saved to: {results_file}")
-
 
 if __name__ == "__main__":
     import sys
-    
     symbol = sys.argv[1] if len(sys.argv) > 1 else 'SPY'
-    days = int(sys.argv[2]) if len(sys.argv) > 2 else 20
-    
+    days = int(sys.argv[2]) if len(sys.argv) > 2 else 10 # Default to 10 days safe limit
     asyncio.run(run_backtest(symbol, days))
