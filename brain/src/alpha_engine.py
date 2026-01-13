@@ -440,7 +440,11 @@ class AlphaEngine:
         df['dx'] = 100 * abs(df['plus_di'] - df['minus_di']) / (df['plus_di'] + df['minus_di'])
         df['adx'] = df['dx'].ewm(alpha=alpha, adjust=False).mean()
 
-        return float(df['adx'].iloc[-1])
+        adx_value = df['adx'].iloc[-1]
+        # Handle NaN values from pandas operations
+        if pd.isna(adx_value):
+            return 25.0  # Default to 'Trending' if calculation fails
+        return float(adx_value)
 
     def get_adx(self, symbol: str) -> float:
         """Get ADX for a symbol"""

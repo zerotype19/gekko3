@@ -229,7 +229,7 @@ class MarketFeed:
         # 3. Scalper (0DTE) - All Day
         if not signal:
             rsi_2 = self.alpha_engine.get_rsi(symbol, period=2)
-            if rsi_2 < 5 or rsi_2 > 95:
+            if rsi_2 is not None and (rsi_2 < 5 or rsi_2 > 95):
                 zero_dte = await self._get_0dte_expiration(symbol)
                 if zero_dte:
                     if rsi_2 < 5:
