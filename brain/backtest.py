@@ -73,12 +73,10 @@ class MockGatekeeper:
         return summary
 
 
-async def fetch_historical_data(symbol: str, days: int = 30) -> pd.DataFrame:
+async def fetch_historical_data(symbol: str, days: int = 20) -> pd.DataFrame:
     """
     Fetch historical 1-minute candle data from Tradier
-    
-    Note: Tradier's history endpoint may have limitations.
-    For production, consider using a dedicated historical data provider.
+    NOTE: Tradier 'timesales' endpoint has a ~20 day limit for 1-min data.
     """
     access_token = os.getenv('TRADIER_ACCESS_TOKEN', '')
     if not access_token:
@@ -89,18 +87,21 @@ async def fetch_historical_data(symbol: str, days: int = 30) -> pd.DataFrame:
         'Accept': 'application/json'
     }
     
+    # Tradier limits 1-min data to roughly 20 days
+    safe_days = min(days, 20)
     end_date = datetime.now()
-    start_date = end_date - timedelta(days=days)
+    start_date = end_date - timedelta(days=safe_days)
     
-    print(f"📥 Fetching historical data for {symbol} from {start_date.date()} to {end_date.date()}...")
+    print(f"📥 Fetching {safe_days} days of 1-min data for {symbol} (Tradier Limit)...")
     
-    # Tradier history endpoint
-    url = f'{TRADIER_API_BASE}/markets/history'
+    # CORRECTED ENDPOINT: Use 'timesales' for intraday data
+    url = f'{TRADIER_API_BASE}/markets/timesales'
     params = {
         'symbol': symbol,
         'interval': '1min',
-        'start': start_date.strftime('%Y-%m-%d'),
-        'end': end_date.strftime('%Y-%m-%d')
+        'start': start_date.strftime('%Y-%m-%d %H:%M'),
+        'end': end_date.strftime('%Y-%m-%d %H:%M'),
+        'session_filter': 'all'  # Optional: 'open' for market hours only
     }
     
     try:
@@ -108,44 +109,36 @@ async def fetch_historical_data(symbol: str, days: int = 30) -> pd.DataFrame:
             async with session.get(url, headers=headers, params=params) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    # Parse Tradier response format
-                    history = data.get('history', {})
-                    if not history or history == 'null':
-                        print("⚠️  No historical data returned. Using placeholder data.")
-                        return create_placeholder_data(symbol, days)
+                    series = data.get('series', {}).get('data', [])
                     
-                    day_data = history.get('day', [])
-                    if not day_data:
-                        print("⚠️  No day data in response. Using placeholder data.")
+                    if not series:
+                        print("⚠️  No data returned. Market might be closed or symbol invalid.")
                         return create_placeholder_data(symbol, days)
                     
                     # Convert to DataFrame
-                    # Note: Tradier format may vary - adjust parsing as needed
-                    records = []
-                    for day in day_data if isinstance(day_data, list) else [day_data]:
-                        # Tradier returns daily bars, not 1-min. For 1-min, you may need
-                        # to use a different endpoint or data provider
-                        records.append({
-                            'timestamp': pd.to_datetime(day.get('date', '')),
-                            'open': float(day.get('open', 0)),
-                            'high': float(day.get('high', 0)),
-                            'low': float(day.get('low', 0)),
-                            'close': float(day.get('close', 0)),
-                            'volume': int(day.get('volume', 0))
-                        })
+                    df = pd.DataFrame(series)
                     
-                    df = pd.DataFrame(records)
-                    if df.empty:
-                        return create_placeholder_data(symbol, days)
+                    # Rename columns to match AlphaEngine expectations
+                    if 'time' in df.columns:
+                        df.rename(columns={'time': 'timestamp'}, inplace=True)
+                    
+                    df['timestamp'] = pd.to_datetime(df['timestamp'])
+                    
+                    # Ensure numeric types
+                    cols = ['open', 'high', 'low', 'close', 'volume']
+                    for col in cols:
+                        if col in df.columns:
+                            df[col] = pd.to_numeric(df[col], errors='coerce')
                     
                     df = df.sort_values('timestamp')
-                    print(f"✅ Loaded {len(df)} candles")
+                    print(f"✅ Loaded {len(df)} candles from Tradier Production API")
                     return df
                 else:
-                    print(f"⚠️  API returned {resp.status}. Using placeholder data.")
+                    text = await resp.text()
+                    print(f"⚠️  API Error {resp.status}: {text}")
                     return create_placeholder_data(symbol, days)
     except Exception as e:
-        print(f"⚠️  Error fetching data: {e}. Using placeholder data.")
+        print(f"⚠️  Connection Error: {e}")
         return create_placeholder_data(symbol, days)
 
 
