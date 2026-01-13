@@ -316,14 +316,16 @@ export class GatekeeperDO {
       };
     }
 
-    const dte = calculateDTE(firstLeg.expiration);
-    if (dte < 1 || dte > 7) {
+        const dte = calculateDTE(firstLeg.expiration);
+    // Use Constitution limits instead of hardcoded 1-7 days
+    if (dte < CONSTITUTION.minDte || dte > CONSTITUTION.maxDte) {
       return {
         status: 'REJECTED',
-        rejectionReason: `DTE out of range: ${dte} days (must be 1-7 days)`,
+        rejectionReason: `DTE out of range: ${dte} days (must be ${CONSTITUTION.minDte}-${CONSTITUTION.maxDte} days)`,
         evaluatedAt,
       };
     }
+
 
     // 5. Risk Checks
     const dailyLossPercent = await this.getDailyLossPercent();
