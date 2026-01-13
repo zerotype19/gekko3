@@ -170,13 +170,13 @@ def create_placeholder_data(symbol: str, days: int) -> pd.DataFrame:
     return df
 
 
-async def run_backtest(symbol: str = 'SPY', days: int = 30):
+async def run_backtest(symbol: str = 'SPY', days: int = 20):
     """
     Run a backtest by replaying historical data through AlphaEngine
     
     Args:
         symbol: Symbol to backtest (default: 'SPY')
-        days: Number of days of history to use (default: 30)
+        days: Number of days of history to use (default: 20, max: 20 for 1-min data)
     """
     print(f"\n{'='*60}")
     print(f"🧪 GEKKO3 BACKTESTER")
