@@ -96,17 +96,25 @@ async def fetch_historical_data(symbol: str, days: int = 20) -> pd.DataFrame:
     
     # CORRECTED ENDPOINT: Use 'timesales' for intraday data
     url = f'{TRADIER_API_BASE}/markets/timesales'
-    params = {
+    
+    # Build URL with query parameters manually to avoid duplicate key issues
+    # Tradier expects: symbol, interval, start (YYYY-MM-DD HH:MM), end (YYYY-MM-DD HH:MM), session_filter
+    start_str = start_date.strftime('%Y-%m-%d %H:%M')
+    end_str = end_date.strftime('%Y-%m-%d %H:%M')
+    
+    # Use urlencode to properly encode parameters
+    query_params = urlencode({
         'symbol': symbol,
         'interval': '1min',
-        'start': start_date.strftime('%Y-%m-%d %H:%M'),
-        'end': end_date.strftime('%Y-%m-%d %H:%M'),
-        'session_filter': 'all'  # Optional: 'open' for market hours only
-    }
+        'start': start_str,
+        'end': end_str,
+        'session_filter': 'all'
+    })
+    full_url = f'{url}?{query_params}'
     
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, params=params) as resp:
+            async with session.get(full_url, headers=headers) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     series = data.get('series', {}).get('data', [])
