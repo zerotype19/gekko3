@@ -8,6 +8,7 @@ import asyncio
 import json
 from datetime import datetime, timedelta
 from typing import Dict, List
+from urllib.parse import urlencode
 import aiohttp
 import os
 from dotenv import load_dotenv
