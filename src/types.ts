@@ -80,10 +80,15 @@ export interface RiskConfig {
   maxConcentrationPerSymbol: number;
   maxDailyLossPercent: number;
 
+  // DTE Constraints (NEW)
+  minDte: number;
+  maxDte: number;
+
   // Execution constraints
   staleProposalMs: number;
   forceEodCloseEt: string; // "HH:MM" format in ET timezone
 }
+
 
 /**
  * Proposal Evaluation Result
