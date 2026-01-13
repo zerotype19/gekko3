@@ -258,6 +258,6 @@ if __name__ == "__main__":
     import sys
     
     symbol = sys.argv[1] if len(sys.argv) > 1 else 'SPY'
-    days = int(sys.argv[2]) if len(sys.argv) > 2 else 30
+    days = int(sys.argv[2]) if len(sys.argv) > 2 else 20
     
     asyncio.run(run_backtest(symbol, days))
