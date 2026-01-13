@@ -13,9 +13,9 @@ export const CONSTITUTION: RiskConfig = {
   // Strategy: Only credit spreads are permitted
   allowedStrategies: ['CREDIT_SPREAD'] as const,
 
-  // Risk Limits (INCREASED FOR MULTI-STRATEGY)
-  maxOpenPositions: 3,          // Increased to allow Iron Condor (2 legs) + Scalper (1 leg)
-  maxConcentrationPerSymbol: 2, // Increased to allow Iron Condor on same symbol
+  // Risk Limits (INCREASED FOR TESTING)
+  maxOpenPositions: 20,          // Increased to 20 for testing
+  maxConcentrationPerSymbol: 20, // Increased to 20 for testing
   maxDailyLossPercent: 0.02,    // Keeps 2% hard stop (Safety First).
 
   // Execution Constraints
