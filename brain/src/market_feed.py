@@ -344,6 +344,9 @@ class MarketFeed:
             
             self.last_proposal_time[symbol] = now
             self.last_signals[symbol] = {'signal': signal, 'timestamp': now}
+        
+        # Export state for dashboard (after signal check)
+        self.export_state()
 
     # --- PRODUCTION GRADE HELPERS ---
 
