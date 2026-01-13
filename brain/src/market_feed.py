@@ -221,8 +221,11 @@ class MarketFeed:
             adx = self.alpha_engine.get_adx(symbol)
             if adx < 20: # Low Trend
                 logging.info(f"🚜 FARMING: {symbol} ADX {adx:.1f}. Opening Iron Condor.")
-                await self._send_proposal(symbol, 'IRON_CONDOR_LEG', 'OPEN', 'CALL', indicators, 'neutral')
-                await self._send_proposal(symbol, 'IRON_CONDOR_LEG', 'OPEN', 'PUT', indicators, 'neutral')
+                # FIX: Use 'CREDIT_SPREAD' so Gatekeeper accepts the order
+                # Leg 1: Bear Call Spread
+                await self._send_proposal(symbol, 'CREDIT_SPREAD', 'OPEN', 'CALL', indicators, 'neutral')
+                # Leg 2: Bull Put Spread
+                await self._send_proposal(symbol, 'CREDIT_SPREAD', 'OPEN', 'PUT', indicators, 'neutral')
                 self.last_proposal_time[symbol] = now
                 return
 
@@ -250,6 +253,35 @@ class MarketFeed:
                         await self._send_proposal(symbol, strategy, side, option_type, indicators, bias, force_expiration=zero_dte)
                         self.last_signals[symbol] = {'signal': signal, 'timestamp': now}
                         return
+
+        # --- UTILITY 1: EARNINGS ASSASSIN ---
+        # Trigger: 3:55 PM on Earnings Day
+        # Logic: Sell Iron Condor to capture IV Crush
+        # TODO: Connect to a real earnings calendar API
+        # For now, hardcode today's earnings symbols here manually or via env var
+        EARNINGS_TODAY = []  # Example: ['NFLX', 'TSLA'] - manually set for earnings days
+        
+        if not signal and symbol in EARNINGS_TODAY and current_hour == 15 and current_minute >= 55:
+            # Check if we already fired (deduplication handled by last_proposal_time)
+            logging.info(f"🥷 ASSASSIN: Executing Earnings Play on {symbol}")
+            await self._send_proposal(symbol, 'CREDIT_SPREAD', 'OPEN', 'CALL', indicators, 'neutral')
+            await self._send_proposal(symbol, 'CREDIT_SPREAD', 'OPEN', 'PUT', indicators, 'neutral')
+            self.last_proposal_time[symbol] = now
+            return
+
+        # --- UTILITY 3: WEEKEND WARRIOR ---
+        # Trigger: Friday @ 3:55 PM
+        # Logic: Sell premium to collect 2 days of weekend Theta decay
+        is_friday = now.weekday() == 4
+        if not signal and is_friday and current_hour == 15 and current_minute >= 55:
+            # Only trade if market isn't crashing (VIX check)
+            vix_value = indicators.get('vix') or 0
+            if vix_value < 25:
+                logging.info(f"🏖️ WEEKEND WARRIOR: Selling Friday Premium on {symbol}")
+                # Sell a Put Spread (betting market won't crash over weekend)
+                await self._send_proposal(symbol, 'CREDIT_SPREAD', 'OPEN', 'PUT', indicators, 'bullish')
+                self.last_proposal_time[symbol] = now
+                return
 
         # 4. Trend Strategy (The Core) - After Warmup
         if not signal:
