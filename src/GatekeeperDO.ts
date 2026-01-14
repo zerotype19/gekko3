@@ -349,66 +349,69 @@ export class GatekeeperDO {
     }
 
     // 4.b Structure Validation (New for Phase B)
-    const legCount = proposal.legs.length;
+    // Skip structure validation for CLOSE proposals (we're just closing existing positions)
+    if (proposal.side === 'OPEN') {
+      const legCount = proposal.legs.length;
 
-    switch (proposal.strategy) {
-      case 'CREDIT_SPREAD':
-        if (legCount !== 2) {
-          return {
-            status: 'REJECTED',
-            rejectionReason: `CREDIT_SPREAD must have exactly 2 legs (got ${legCount})`,
-            evaluatedAt,
-          };
-        }
-        break;
+      switch (proposal.strategy) {
+        case 'CREDIT_SPREAD':
+          if (legCount !== 2) {
+            return {
+              status: 'REJECTED',
+              rejectionReason: `CREDIT_SPREAD must have exactly 2 legs (got ${legCount})`,
+              evaluatedAt,
+            };
+          }
+          break;
 
-      case 'IRON_CONDOR':
-        if (legCount !== 4) {
-          return {
-            status: 'REJECTED',
-            rejectionReason: `IRON_CONDOR must have exactly 4 legs (got ${legCount})`,
-            evaluatedAt,
-          };
-        }
-        break;
+        case 'IRON_CONDOR':
+          if (legCount !== 4) {
+            return {
+              status: 'REJECTED',
+              rejectionReason: `IRON_CONDOR must have exactly 4 legs (got ${legCount})`,
+              evaluatedAt,
+            };
+          }
+          break;
 
-      case 'IRON_BUTTERFLY':
-        // Iron Fly usually has 4 legs (Long Put, Short Put, Short Call, Long Call)
-        // Sometimes 3 if strikes overlap, but we stick to 4 for clarity
-        if (legCount !== 4) {
-          return {
-            status: 'REJECTED',
-            rejectionReason: `IRON_BUTTERFLY must have exactly 4 legs (got ${legCount})`,
-            evaluatedAt,
-          };
-        }
-        break;
+        case 'IRON_BUTTERFLY':
+          // Iron Fly usually has 4 legs (Long Put, Short Put, Short Call, Long Call)
+          // Sometimes 3 if strikes overlap, but we stick to 4 for clarity
+          if (legCount !== 4) {
+            return {
+              status: 'REJECTED',
+              rejectionReason: `IRON_BUTTERFLY must have exactly 4 legs (got ${legCount})`,
+              evaluatedAt,
+            };
+          }
+          break;
 
-      case 'RATIO_SPREAD':
-        if (legCount !== 2) {
+        case 'RATIO_SPREAD':
+          if (legCount !== 2) {
+            return {
+              status: 'REJECTED',
+              rejectionReason: `RATIO_SPREAD must have exactly 2 legs (got ${legCount})`,
+              evaluatedAt,
+            };
+          }
+          // Ratio Check: Quantities must NOT be equal (that's just a spread)
+          if (proposal.legs[0].quantity === proposal.legs[1].quantity) {
+            return {
+              status: 'REJECTED',
+              rejectionReason: `RATIO_SPREAD must have unequal quantities`,
+              evaluatedAt,
+            };
+          }
+          break;
+          
+        default:
+          // Should be caught by allowedStrategies check, but safety first
           return {
             status: 'REJECTED',
-            rejectionReason: `RATIO_SPREAD must have exactly 2 legs (got ${legCount})`,
+            rejectionReason: `Unknown strategy structure: ${proposal.strategy}`,
             evaluatedAt,
           };
-        }
-        // Ratio Check: Quantities must NOT be equal (that's just a spread)
-        if (proposal.legs[0].quantity === proposal.legs[1].quantity) {
-          return {
-            status: 'REJECTED',
-            rejectionReason: `RATIO_SPREAD must have unequal quantities`,
-            evaluatedAt,
-          };
-        }
-        break;
-        
-      default:
-        // Should be caught by allowedStrategies check, but safety first
-        return {
-          status: 'REJECTED',
-          rejectionReason: `Unknown strategy structure: ${proposal.strategy}`,
-          evaluatedAt,
-        };
+      }
     }
 
     // DTE Check: Calculate from first leg's expiration
