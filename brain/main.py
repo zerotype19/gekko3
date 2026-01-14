@@ -70,6 +70,9 @@ class BrainSupervisor:
         
         # State tracking for notifications (avoid duplicates)
         self.last_market_state = None
+        
+        # Heartbeat timing (Phase C: Final Polish)
+        self.last_heartbeat_time = 0
 
     def is_market_hours(self):
         """
@@ -147,21 +150,40 @@ class BrainSupervisor:
                             self.feed_task = asyncio.create_task(self.market_feed.connect())
                 
                 # Send heartbeat every minute with rich state (Phase C: Final Polish)
-                try:
-                    # Collect State
-                    brain_state = {
-                        'regime': self.regime_engine.get_regime('SPY').value,
-                        'greeks': self.market_feed.portfolio_greeks,
-                        'iv_rank_spy': self.alpha_engine.get_iv_rank('SPY')
-                    }
-                    await self.gatekeeper.send_heartbeat(brain_state)
-                except Exception as e:
-                    # Fallback to simple heartbeat if state collection fails
+                now_ts = datetime.now(self.tz).timestamp()
+                if now_ts - self.last_heartbeat_time >= 60:  # Every 60 seconds
                     try:
-                        await self.gatekeeper.send_heartbeat()
-                    except:
-                        pass
-                    logging.debug(f"Heartbeat failed (non-critical): {e}")
+                        # Collect Rich State (safe access to avoid crashes during startup)
+                        regime_val = "UNKNOWN"
+                        try:
+                            regime_val = self.regime_engine.get_regime('SPY').value
+                        except:
+                            pass
+                        
+                        iv_rank_val = 0
+                        try:
+                            iv_rank_val = self.alpha_engine.get_iv_rank('SPY')
+                        except:
+                            pass
+                        
+                        brain_state = {
+                            'regime': regime_val,
+                            'greeks': self.market_feed.portfolio_greeks,  # Live Delta/Theta/Vega
+                            'iv_rank_spy': iv_rank_val
+                        }
+                        
+                        # Send to Gatekeeper
+                        await self.gatekeeper.send_heartbeat(brain_state)
+                        self.last_heartbeat_time = now_ts
+                        logging.debug("💓 Heartbeat sent with rich state")
+                    except Exception as e:
+                        # Fallback to simple heartbeat if state collection fails
+                        try:
+                            await self.gatekeeper.send_heartbeat()
+                            self.last_heartbeat_time = now_ts
+                        except:
+                            pass
+                        logging.debug(f"Heartbeat failed (non-critical): {e}")
                 
                 # Pulse check every minute during market hours (with shutdown checks)
                 if not self.running:
