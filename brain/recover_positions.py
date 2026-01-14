@@ -24,7 +24,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 KNOWN_SYMBOLS = ['SPY', 'QQQ', 'IWM', 'DIA']
 
 def get_account_id():
-    """Fetch the Account ID associated with the token"""
+    """Fetch the Paper Trading Account ID (starts with VA)"""
     headers = {'Authorization': f'Bearer {ACCESS_TOKEN}', 'Accept': 'application/json'}
     try:
         r = requests.get(f"{API_BASE}/user/profile", headers=headers)
@@ -32,9 +32,21 @@ def get_account_id():
             data = r.json()
             # Handle list or single account
             acct = data['profile']['account']
-            if isinstance(acct, list):
-                return acct[0]['account_number']
-            return acct['account_number']
+            accounts = acct if isinstance(acct, list) else [acct]
+            
+            # Look for paper trading account (starts with VA)
+            for account in accounts:
+                account_num = account.get('account_number', '')
+                if account_num.startswith('VA'):
+                    print(f"✅ Found Paper Trading Account: {account_num}")
+                    return account_num
+            
+            # Fallback: if no VA account found, use first account but warn
+            if accounts:
+                account_num = accounts[0].get('account_number', '')
+                print(f"⚠️ WARNING: No VA account found. Using first account: {account_num}")
+                print(f"   Available accounts: {[a.get('account_number', '') for a in accounts]}")
+                return account_num
     except Exception as e:
         logging.error(f"Failed to get account: {e}")
     return None
