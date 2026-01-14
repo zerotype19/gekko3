@@ -38,3 +38,7 @@ dist/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Runtime data
+brain/brain_state.json
+brain/backtest_results_*.json
