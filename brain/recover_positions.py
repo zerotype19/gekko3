@@ -45,18 +45,56 @@ def get_positions(account_id):
     url = f"{API_BASE}/accounts/{account_id}/positions"
     r = requests.get(url, headers=headers)
     if r.status_code != 200:
-        logging.error(f"Error fetching positions: {r.text}")
+        logging.error(f"Error fetching positions: {r.status_code} - {r.text}")
         return []
     
     data = r.json()
+    print(f"🔍 API Response structure: {list(data.keys())}")
+    
+    # Try multiple possible response formats
     pos_data = data.get('positions', {})
-    if pos_data == 'null' or not pos_data:
+    
+    # Debug: Print the actual response structure
+    print(f"🔍 Positions data type: {type(pos_data)}")
+    if pos_data:
+        print(f"🔍 Positions data keys: {list(pos_data.keys()) if isinstance(pos_data, dict) else 'N/A'}")
+    
+    # Handle different response formats
+    if pos_data == 'null' or pos_data is None:
+        print("ℹ️ Positions field is 'null' or None")
         return []
     
+    if not pos_data:
+        print("ℹ️ Positions field is empty")
+        return []
+    
+    # Get position array
     positions = pos_data.get('position', [])
+    
+    # Handle different formats
+    if positions == 'null' or positions is None:
+        print("ℹ️ Position field is 'null' or None")
+        return []
+    
     if isinstance(positions, dict):
         positions = [positions]
-    return positions
+    elif isinstance(positions, list):
+        print(f"✅ Found {len(positions)} position(s) in list format")
+    else:
+        print(f"⚠️ Unexpected position format: {type(positions)}")
+        return []
+    
+    # Filter to only option positions (have symbol with date pattern)
+    option_positions = []
+    for p in positions:
+        symbol = p.get('symbol', '')
+        if re.match(r'^[A-Z]+\d{6}[CP]\d{8}$', symbol):
+            option_positions.append(p)
+        else:
+            print(f"   ⏭️ Skipping non-option position: {symbol}")
+    
+    print(f"✅ Found {len(option_positions)} option position(s) out of {len(positions)} total")
+    return option_positions
 
 def parse_option_symbol(opt_symbol):
     """
