@@ -120,7 +120,7 @@
         
         async function updateStatus() {
             try {
-                const res = await fetch(`${API_BASE}/status`);
+                const res = await fetch(API_BASE + '/status');
                 const data = await res.json();
                 const bs = data.brainState || {};
                 const greeks = bs.greeks || {};
@@ -164,7 +164,7 @@
                     hbEl.textContent = '🟢 Online';
                     hbEl.style.color = 'var(--green)';
                 } else {
-                    hbEl.textContent = `🔴 ${secondsAgo}s Ago`;
+                    hbEl.textContent = '🔴 ' + secondsAgo + 's Ago';
                     hbEl.style.color = 'var(--red)';
                 }
 
@@ -190,14 +190,12 @@
                         if (m.iv_rank < 20) ivColor = 'var(--green)'; // Buy Premium
                         if (m.iv_rank > 50) ivColor = 'var(--orange)'; // Sell Premium
 
-                        row.innerHTML = `
-                            <td style="font-weight:bold;">${sym}</td>
-                            <td>$${m.price.toFixed(2)}</td>
-                            <td style="color:${trendColor}">${m.trend}</td>
-                            <td style="color:${rsiColor}">${m.rsi.toFixed(1)}</td>
-                            <td style="color:${ivColor}">${m.iv_rank.toFixed(0)}%</td>
-                            <td>${m.active_signal ? '<span class="status-badge status-normal" style="font-size:0.6rem">SIGNAL</span>' : '-'}</td>
-                        `;
+                        row.innerHTML = '<td style="font-weight:bold;">' + sym + '</td>' +
+                            '<td>$' + m.price.toFixed(2) + '</td>' +
+                            '<td style="color:' + trendColor + '">' + m.trend + '</td>' +
+                            '<td style="color:' + rsiColor + '">' + m.rsi.toFixed(1) + '</td>' +
+                            '<td style="color:' + ivColor + '">' + m.iv_rank.toFixed(0) + '%</td>' +
+                            '<td>' + (m.active_signal ? '<span class="status-badge status-normal" style="font-size:0.6rem">SIGNAL</span>' : '-') + '</td>';
                         tbody.appendChild(row);
                     }
                 }
@@ -209,7 +207,7 @@
             const endpoint = lock ? 'admin/lock' : 'admin/unlock';
             const reason = lock ? prompt("Reason:", "Manual") : null;
             if (lock && !reason) return;
-            await fetch(`${API_BASE}/${endpoint}`, {
+            await fetch(API_BASE + '/' + endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ reason })

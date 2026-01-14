@@ -129,7 +129,7 @@ const UI_HTML = `<!DOCTYPE html>
         
         async function updateStatus() {
             try {
-                const res = await fetch(\`\${API_BASE}/status\`);
+                const res = await fetch(API_BASE + '/status');
                 const data = await res.json();
                 const bs = data.brainState || {};
                 const greeks = bs.greeks || {};
@@ -141,7 +141,7 @@ const UI_HTML = `<!DOCTYPE html>
                 const btnUnlock = document.getElementById('btnUnlock');
                 
                 if (data.status === 'LOCKED') {
-                    statusBadge.textContent = \`LOCKED: \${data.lockReason || 'Manual'}\`;
+                    statusBadge.textContent = 'LOCKED: ' + (data.lockReason || 'Manual');
                     statusBadge.className = 'status-badge status-locked';
                     btnLock.classList.add('hidden');
                     btnUnlock.classList.remove('hidden');
@@ -173,7 +173,7 @@ const UI_HTML = `<!DOCTYPE html>
                     hbEl.textContent = '🟢 Online';
                     hbEl.style.color = 'var(--green)';
                 } else {
-                    hbEl.textContent = \`🔴 \${secondsAgo}s Ago\`;
+                    hbEl.textContent = '🔴 ' + secondsAgo + 's Ago';
                     hbEl.style.color = 'var(--red)';
                 }
 
@@ -199,14 +199,12 @@ const UI_HTML = `<!DOCTYPE html>
                         if (m.iv_rank < 20) ivColor = 'var(--green)'; // Buy Premium
                         if (m.iv_rank > 50) ivColor = 'var(--orange)'; // Sell Premium
 
-                        row.innerHTML = \`
-                            <td style="font-weight:bold;">\${sym}</td>
-                            <td>$\${m.price.toFixed(2)}</td>
-                            <td style="color:\${trendColor}">\${m.trend}</td>
-                            <td style="color:\${rsiColor}">\${m.rsi.toFixed(1)}</td>
-                            <td style="color:\${ivColor}">\${m.iv_rank.toFixed(0)}%</td>
-                            <td>\${m.active_signal ? '<span class="status-badge status-normal" style="font-size:0.6rem">SIGNAL</span>' : '-'}</td>
-                        \`;
+                        row.innerHTML = '<td style="font-weight:bold;">' + sym + '</td>' +
+                            '<td>$' + m.price.toFixed(2) + '</td>' +
+                            '<td style="color:' + trendColor + '">' + m.trend + '</td>' +
+                            '<td style="color:' + rsiColor + '">' + m.rsi.toFixed(1) + '</td>' +
+                            '<td style="color:' + ivColor + '">' + m.iv_rank.toFixed(0) + '%</td>' +
+                            '<td>' + (m.active_signal ? '<span class="status-badge status-normal" style="font-size:0.6rem">SIGNAL</span>' : '-') + '</td>';
                         tbody.appendChild(row);
                     }
                 }
@@ -218,70 +216,7 @@ const UI_HTML = `<!DOCTYPE html>
             const endpoint = lock ? 'admin/lock' : 'admin/unlock';
             const reason = lock ? prompt("Reason:", "Manual") : null;
             if (lock && !reason) return;
-            await fetch(\`\${API_BASE}/\${endpoint}\`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ reason })
-            });
-            updateStatus();
-        }
-
-        setInterval(updateStatus, 2000);
-        updateStatus();
-    </script>
-</body>
-</html>
-`;
-                    statusBadge.className = 'status-badge status-locked';
-                    btnLock.classList.add('hidden');
-                    btnUnlock.classList.remove('hidden');
-                } else {
-                    statusBadge.textContent = 'SYSTEM ACTIVE';
-                    statusBadge.className = 'status-badge status-normal';
-                    btnLock.classList.remove('hidden');
-                    btnUnlock.classList.add('hidden');
-                }
-
-                // 2. Account Metrics
-                document.getElementById('equity').textContent = '$' + (data.equity || 0).toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 0});
-                
-                const pnl = data.dailyPnL || 0;
-                const pnlEl = document.getElementById('pnl');
-                pnlEl.textContent = (pnl >= 0 ? '+' : '') + (pnl * 100).toFixed(2) + '%';
-                pnlEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
-
-                // 3. Brain Metrics (The New Stuff)
-                document.getElementById('regime').textContent = bs.regime || 'WAITING...';
-                document.getElementById('ivRank').textContent = bs.iv_rank_spy ? Math.round(bs.iv_rank_spy) : '--';
-                
-                const delta = greeks.delta || 0;
-                const deltaEl = document.getElementById('delta');
-                deltaEl.textContent = (delta > 0 ? '+' : '') + delta.toFixed(1);
-                deltaEl.style.color = Math.abs(delta) > 50 ? 'var(--orange)' : 'var(--text)'; // Warn if high delta
-
-                document.getElementById('theta').textContent = '+' + (greeks.theta || 0).toFixed(1);
-
-                // 4. Heartbeat
-                const lastHeartbeat = data.lastHeartbeat || 0;
-                const secondsAgo = lastHeartbeat > 0 ? Math.floor((Date.now() - lastHeartbeat) / 1000) : 999;
-                const hbEl = document.getElementById('heartbeat');
-                
-                if (secondsAgo < 60) {
-                    hbEl.textContent = '🟢 Online';
-                    hbEl.style.color = 'var(--green)';
-                } else {
-                    hbEl.textContent = \`🔴 \${secondsAgo}s Ago\`;
-                    hbEl.style.color = 'var(--red)';
-                }
-
-            } catch (e) { console.error(e); }
-        }
-
-        async function toggleLock(lock) {
-            const endpoint = lock ? 'admin/lock' : 'admin/unlock';
-            const reason = lock ? prompt("Reason:", "Manual") : null;
-            if (lock && !reason) return;
-            await fetch(\`\${API_BASE}/\${endpoint}\`, {
+            await fetch(API_BASE + '/' + endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ reason })
