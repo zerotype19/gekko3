@@ -298,6 +298,69 @@ export class GatekeeperDO {
       };
     }
 
+    // 4.b Structure Validation (New for Phase B)
+    const legCount = proposal.legs.length;
+
+    switch (proposal.strategy) {
+      case 'CREDIT_SPREAD':
+        if (legCount !== 2) {
+          return {
+            status: 'REJECTED',
+            rejectionReason: `CREDIT_SPREAD must have exactly 2 legs (got ${legCount})`,
+            evaluatedAt,
+          };
+        }
+        break;
+
+      case 'IRON_CONDOR':
+        if (legCount !== 4) {
+          return {
+            status: 'REJECTED',
+            rejectionReason: `IRON_CONDOR must have exactly 4 legs (got ${legCount})`,
+            evaluatedAt,
+          };
+        }
+        break;
+
+      case 'IRON_BUTTERFLY':
+        // Iron Fly usually has 4 legs (Long Put, Short Put, Short Call, Long Call)
+        // Sometimes 3 if strikes overlap, but we stick to 4 for clarity
+        if (legCount !== 4) {
+          return {
+            status: 'REJECTED',
+            rejectionReason: `IRON_BUTTERFLY must have exactly 4 legs (got ${legCount})`,
+            evaluatedAt,
+          };
+        }
+        break;
+
+      case 'RATIO_SPREAD':
+        if (legCount !== 2) {
+          return {
+            status: 'REJECTED',
+            rejectionReason: `RATIO_SPREAD must have exactly 2 legs (got ${legCount})`,
+            evaluatedAt,
+          };
+        }
+        // Ratio Check: Quantities must NOT be equal (that's just a spread)
+        if (proposal.legs[0].quantity === proposal.legs[1].quantity) {
+          return {
+            status: 'REJECTED',
+            rejectionReason: `RATIO_SPREAD must have unequal quantities`,
+            evaluatedAt,
+          };
+        }
+        break;
+        
+      default:
+        // Should be caught by allowedStrategies check, but safety first
+        return {
+          status: 'REJECTED',
+          rejectionReason: `Unknown strategy structure: ${proposal.strategy}`,
+          evaluatedAt,
+        };
+    }
+
     // DTE Check: Calculate from first leg's expiration
     if (proposal.legs.length === 0) {
       return {
@@ -485,47 +548,42 @@ export class GatekeeperDO {
       try {
         let orderResult;
 
-        if (proposal.strategy === 'CREDIT_SPREAD') {
+        // Supported Strategies for Auto-Execution
+        const supportedStrategies = ['CREDIT_SPREAD', 'IRON_CONDOR', 'IRON_BUTTERFLY', 'RATIO_SPREAD'];
+
+        if (supportedStrategies.includes(proposal.strategy)) {
           // Construct Multileg Order
+          // The logic for Sides (OPEN/CLOSE) and Quantities is generic enough to work for all structure types
+          // provided the Brain sends the correct "SELL/BUY" flags in the legs.
+          
           const optionSymbols: string[] = [];
           const sides: string[] = [];
           const quantities: number[] = [];
 
           for (const leg of proposal.legs) {
             optionSymbols.push(leg.symbol);
-            quantities.push(leg.quantity);
+            quantities.push(leg.quantity); // Supports unequal quantities for Ratio Spreads
 
-            // LOGIC FOR SIDE MAPPING:
-            // If side is OPEN: SELL -> sell_to_open, BUY -> buy_to_open
-            // If side is CLOSE: SELL -> buy_to_close (Closing Short), BUY -> sell_to_close (Closing Long)
-            
+            // MAP SIDES
             if (proposal.side === 'OPEN') {
-              // Entry
-              if (leg.side === 'SELL') {
-                sides.push('sell_to_open');
-              } else {
-                sides.push('buy_to_open');
-              }
+              // Opening: SELL->sell_to_open, BUY->buy_to_open
+              sides.push(leg.side === 'SELL' ? 'sell_to_open' : 'buy_to_open');
             } else {
-              // Exit (Invert)
-              if (leg.side === 'SELL') {
-                sides.push('buy_to_close'); // Was Short, now Buying to Close
-              } else {
-                sides.push('sell_to_close'); // Was Long, now Selling to Close
-              }
+              // Closing: SELL->buy_to_close, BUY->sell_to_close
+              sides.push(leg.side === 'SELL' ? 'buy_to_close' : 'sell_to_close');
             }
           }
 
-          // CRITICAL FIX: Determine Order Type for Multileg
-          // Entry (OPEN) = We want a Net Credit -> type: 'credit'
-          // Exit (CLOSE) = We pay a Net Debit -> type: 'debit'
+          // Order Type Logic
+          // Default: Credit for Open, Debit for Close (Standard for Premium Selling)
+          // Ratio Spreads might be debit, but we assume "Credit Backspreads" for now based on strategy goals.
           const orderType = proposal.side === 'OPEN' ? 'credit' : 'debit';
 
           orderResult = await this.tradierClient.placeOrder({
             class: 'multileg',
             symbol: proposal.symbol,
-            type: orderType, // Dynamic: 'credit' for OPEN, 'debit' for CLOSE
-            price: proposal.price, // Mandatory limit price
+            type: orderType,
+            price: proposal.price,
             duration: 'day',
             'option_symbol[]': optionSymbols,
             'side[]': sides,
@@ -533,7 +591,7 @@ export class GatekeeperDO {
           });
 
         } else {
-          throw new Error('Unsupported strategy for execution');
+          throw new Error(`Unsupported strategy for execution: ${proposal.strategy}`);
         }
 
         // Record Order

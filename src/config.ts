@@ -10,8 +10,13 @@ export const CONSTITUTION: RiskConfig = {
   // Universe: Expanded to include IWM (Small Caps) and DIA (Dow)
   allowedSymbols: ['SPY', 'QQQ', 'IWM', 'DIA'] as const,
 
-  // Strategy: Only credit spreads are permitted
-  allowedStrategies: ['CREDIT_SPREAD'] as const,
+  // Strategy: Multi-leg and ratio structures
+  allowedStrategies: [
+    'CREDIT_SPREAD', 
+    'IRON_CONDOR', 
+    'IRON_BUTTERFLY', 
+    'RATIO_SPREAD'
+  ] as const,
 
     // Risk Limits (INCREASED FOR TESTING)
   maxOpenPositions: 20,          // Increased to 20 for testing
