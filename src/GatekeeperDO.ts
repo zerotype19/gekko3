@@ -651,10 +651,13 @@ export class GatekeeperDO {
       try {
         let orderResult;
 
-        // Supported Strategies for Auto-Execution
+        // Supported Strategies for Auto-Execution (OPEN only)
+        // CLOSE proposals can use any strategy (we're just closing existing positions)
         const supportedStrategies = ['CREDIT_SPREAD', 'IRON_CONDOR', 'IRON_BUTTERFLY', 'RATIO_SPREAD'];
-
-        if (supportedStrategies.includes(proposal.strategy)) {
+        
+        // For CLOSE proposals, skip strategy validation - just execute
+        // For OPEN proposals, validate strategy is supported
+        if (proposal.side === 'CLOSE' || supportedStrategies.includes(proposal.strategy)) {
           // Construct Multileg Order
           // The logic for Sides (OPEN/CLOSE) and Quantities is generic enough to work for all structure types
           // provided the Brain sends the correct "SELL/BUY" flags in the legs.
