@@ -64,6 +64,10 @@ class MarketFeed:
         self.vix_poller_task: Optional[asyncio.Task] = None
         self.vix_poller_running = False
         
+        # Position Management (Smart Manager)
+        self.open_positions: Dict[str, Dict] = {}
+        self.position_manager_task: Optional[asyncio.Task] = None
+        
         # Dashboard state export
         self.state_file = 'brain_state.json'
     
@@ -91,6 +95,170 @@ class MarketFeed:
                 json.dump(state, f, indent=2)
         except Exception as e:
             logging.error(f"Failed to export state: {e}")
+
+    # --- POSITION MANAGEMENT (AUTOPILOT) ---
+    
+    async def _manage_positions_loop(self):
+        """Background task to monitor and manage open positions"""
+        logging.info("🛡️ Position Manager: ONLINE")
+        while not self.stop_signal:
+            try:
+                if self.open_positions:
+                    await self._manage_positions()
+            except Exception as e:
+                logging.error(f"⚠️ Manager Error: {e}")
+            await asyncio.sleep(5)  # Check every 5 seconds
+
+    async def _get_quotes(self, symbols: List[str]) -> Dict[str, float]:
+        """Fetch real-time quotes for option symbols"""
+        if not symbols:
+            return {}
+        headers = {'Authorization': f'Bearer {self.access_token}', 'Accept': 'application/json'}
+        url = f'{TRADIER_API_BASE}/markets/quotes'
+        params = {'symbols': ','.join(symbols)}
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, params=params) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        quotes = data.get('quotes', {}).get('quote', [])
+                        if isinstance(quotes, dict):
+                            quotes = [quotes]
+                        # Map symbol -> price (use mid or last)
+                        result = {}
+                        for q in quotes:
+                            symbol = q.get('symbol')
+                            if symbol:
+                                bid = float(q.get('bid', 0) or 0)
+                                ask = float(q.get('ask', 0) or 0)
+                                if bid > 0 and ask > 0:
+                                    result[symbol] = (bid + ask) / 2  # Mid price
+                                else:
+                                    result[symbol] = float(q.get('last', 0) or 0)
+                        return result
+        except Exception as e:
+            logging.error(f"⚠️ Quote fetch failed: {e}")
+        return {}
+
+    async def _manage_positions(self):
+        """Check exit rules for all open trades"""
+        # 1. Collect all option symbols we need to check
+        all_legs = []
+        for pos in self.open_positions.values():
+            for leg in pos['legs']:
+                all_legs.append(leg['symbol'])
+        
+        if not all_legs:
+            return
+        
+        # 2. Batch fetch prices
+        quotes = await self._get_quotes(all_legs)
+        if not quotes:
+            return
+
+        # 3. Check Rules
+        now = datetime.now()
+        for trade_id, pos in list(self.open_positions.items()):
+            # Calculate current spread price (cost to close)
+            # For Credit Spread Close: Cost = Buy back Short leg - Sell Long leg
+            # Cost = Short_Ask - Long_Bid (using mid prices from quotes)
+            cost_to_close = 0.0
+            for leg in pos['legs']:
+                price = quotes.get(leg['symbol'], 0)
+                if price == 0:
+                    # Missing quote data, skip this trade
+                    continue
+                if leg['side'] == 'SELL':  # We are Short this leg
+                    cost_to_close += price  # We pay to buy it back
+                else:  # We are Long this leg
+                    cost_to_close -= price  # We get paid to sell it
+            
+            if cost_to_close == 0:
+                continue  # Skip if no valid quotes
+            
+            # P&L Calculation
+            # Entry Credit = pos['entry_price']
+            # Current P&L = Entry Credit - Cost to Close
+            entry_credit = pos['entry_price']
+            pnl_val = entry_credit - cost_to_close
+            pnl_pct = (pnl_val / entry_credit) * 100 if entry_credit > 0 else 0
+
+            should_close = False
+            reason = ""
+            
+            # Detect Scalper: Check if expiration is today (0DTE)
+            is_scalper = False
+            if pos['legs']:
+                exp_str = pos['legs'][0].get('expiration', '')
+                try:
+                    exp_date = datetime.strptime(exp_str, '%Y-%m-%d').date()
+                    today = datetime.now().date()
+                    is_scalper = (exp_date - today).days == 0
+                except:
+                    pass
+            
+            # A. SCALPER RULES
+            if is_scalper:
+                rsi = self.alpha_engine.get_rsi(pos['symbol'], period=2)
+                
+                # Mean Reversion Exit
+                if rsi is not None:
+                    if pos.get('bias') == 'bullish' and rsi > 50:
+                        should_close = True
+                        reason = f"RSI Mean Reversion ({rsi:.1f})"
+                    elif pos.get('bias') == 'bearish' and rsi < 50:
+                        should_close = True
+                        reason = f"RSI Mean Reversion ({rsi:.1f})"
+                
+                # Hard Stop (20% Loss)
+                if pnl_pct < -20:
+                    should_close = True
+                    reason = "Hard Stop (-20%)"
+
+            # B. STANDARD RULES (Trend/ORB/Farmer)
+            else:
+                # Take Profit (+50%)
+                if pnl_pct >= 50:
+                    should_close = True
+                    reason = "Take Profit (+50%)"
+                
+                # Stop Loss (-200%) - Safety Net
+                if pnl_pct <= -200:
+                    should_close = True
+                    reason = "Stop Loss (-200%)"
+                
+                # EOD Force Close (3:55 PM)
+                if now.hour == 15 and now.minute >= 55:
+                    should_close = True
+                    reason = "EOD Auto-Close"
+
+            if should_close:
+                logging.info(f"🛑 CLOSING {trade_id} | P&L: {pnl_pct:.1f}% | Reason: {reason}")
+                await self._execute_close(trade_id, pos, cost_to_close)
+
+    async def _execute_close(self, trade_id: str, pos: Dict, limit_price: float):
+        """Send CLOSE order to Gatekeeper"""
+        # Construct Close Proposal (Gatekeeper handles leg inversion based on side='CLOSE')
+        # Add buffer to limit price to ensure fill (pay 5 cents more for debit)
+        execution_price = limit_price + 0.05
+        
+        proposal = {
+            'symbol': pos['symbol'],
+            'strategy': pos['strategy'],
+            'side': 'CLOSE',
+            'quantity': 1,
+            'price': round(execution_price, 2),
+            'legs': pos['legs'],  # Send same legs, Gatekeeper inverts logic based on 'CLOSE' side
+            'context': {
+                'reason': 'Manage Position',
+                'closing_trade_id': trade_id
+            }
+        }
+        
+        resp = await self.gatekeeper_client.send_proposal(proposal)
+        if resp and resp.get('status') == 'APPROVED':
+            del self.open_positions[trade_id]
+            logging.info(f"✅ Closed {trade_id}")
 
     # --- VIX Polling ---
     async def _poll_vix_loop(self):
@@ -145,6 +313,9 @@ class MarketFeed:
             try:
                 if not self.vix_poller_running:
                     self.vix_poller_task = asyncio.create_task(self._poll_vix_loop())
+                
+                if not self.position_manager_task:
+                    self.position_manager_task = asyncio.create_task(self._manage_positions_loop())
                 
                 async with websockets.connect(TRADIER_WS_URL) as websocket:
                     self.ws = websocket
@@ -532,4 +703,17 @@ class MarketFeed:
             }
         }
         
-        await self.gatekeeper_client.send_proposal(proposal)
+        response = await self.gatekeeper_client.send_proposal(proposal)
+        
+        # Track approved trades for position management
+        if response and response.get('status') == 'APPROVED':
+            trade_id = f"{symbol}_{strategy}_{int(datetime.now().timestamp())}"
+            self.open_positions[trade_id] = {
+                'symbol': symbol,
+                'strategy': strategy,
+                'legs': proposal['legs'],  # Contains the specific option symbols
+                'entry_price': proposal['price'],
+                'bias': bias,
+                'timestamp': datetime.now()
+            }
+            logging.info(f"📝 Tracking Trade: {trade_id}")
