@@ -552,27 +552,110 @@ class MarketFeed:
         if count > 0:
             logging.debug(f"📊 PORTFOLIO RISK: Delta {total_delta:+.1f} | Theta {total_theta:+.1f} | Vega {total_vega:+.1f}")
 
+    async def _get_actual_positions(self) -> Dict[str, Dict]:
+        """Fetch actual current positions from Tradier to verify quantities/sides"""
+        if not self.account_id:
+            await self._fetch_account_id()
+        if not self.account_id:
+            return {}
+        
+        sandbox_api_base = "https://sandbox.tradier.com/v1"
+        headers = {'Authorization': f'Bearer {self.sandbox_token}', 'Accept': 'application/json'}
+        url = f"{sandbox_api_base}/accounts/{self.account_id}/positions"
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        positions = data.get('positions', {}).get('position', [])
+                        if positions == 'null' or not positions:
+                            return {}
+                        
+                        # Convert to dict keyed by symbol for easy lookup
+                        result = {}
+                        pos_list = positions if isinstance(positions, list) else [positions]
+                        for p in pos_list:
+                            symbol = p.get('symbol')
+                            if symbol:
+                                result[symbol] = {
+                                    'quantity': float(p.get('quantity', 0)),  # Can be negative (short)
+                                    'cost_basis': float(p.get('cost_basis', 0))
+                                }
+                        return result
+        except Exception as e:
+            logging.error(f"Failed to fetch actual positions: {e}")
+        return {}
+
     async def _execute_close(self, trade_id: str, pos: Dict, limit_price: float):
-        """Send CLOSE order and track it"""
+        """Send CLOSE order and track it - uses ACTUAL Tradier positions for quantities"""
+        # CRITICAL: Fetch actual positions from Tradier to get correct quantities
+        # Recovered positions may have wrong quantities if partially filled or adjusted
+        actual_positions = await self._get_actual_positions()
+        
         # Add Aggressive Buffer to Limit Price (Pay more to close)
-        # Standard: +0.05. New Aggressive: +0.10 if PnL is good, or keep 0.05
         execution_price = limit_price + 0.05
         
-        # CRITICAL: Ensure quantities are positive integers for closing
-        # The legs should have the original quantities from when we opened
-        # Gatekeeper will map sides correctly (SELL->buy_to_close, BUY->sell_to_close)
+        # Build legs using ACTUAL quantities from Tradier
         legs = []
         for leg in pos['legs']:
-            # Ensure quantity is positive integer
-            qty = abs(int(leg.get('quantity', 1)))
-            legs.append({
-                'symbol': leg['symbol'],
-                'expiration': leg['expiration'],
-                'strike': leg['strike'],
-                'type': leg['type'],
-                'quantity': qty,  # Use absolute value, ensure integer
-                'side': leg['side']  # Keep original side (SELL/BUY), Gatekeeper will map correctly
-            })
+            leg_symbol = leg['symbol']
+            actual_pos = actual_positions.get(leg_symbol)
+            
+            if actual_pos:
+                # Use actual quantity from Tradier (can be negative for shorts)
+                actual_qty = abs(float(actual_pos['quantity']))
+                # Determine side based on actual Tradier quantity
+                # Negative quantity = short position = was SELL to open = need BUY to close
+                # Positive quantity = long position = was BUY to open = need SELL to close
+                if float(actual_pos['quantity']) < 0:
+                    # Short position: need to BUY to close
+                    side = 'SELL'  # Gatekeeper maps SELL->buy_to_close
+                else:
+                    # Long position: need to SELL to close
+                    side = 'BUY'  # Gatekeeper maps BUY->sell_to_close
+                
+                qty = int(actual_qty)
+                if qty > 0:
+                    legs.append({
+                        'symbol': leg_symbol,
+                        'expiration': leg['expiration'],
+                        'strike': leg['strike'],
+                        'type': leg['type'],
+                        'quantity': qty,
+                        'side': side  # Use side based on actual Tradier position
+                    })
+                else:
+                    logging.warning(f"⚠️ Position {leg_symbol} has zero quantity, skipping leg")
+            else:
+                # Position not found in Tradier - use stored leg (fallback)
+                logging.warning(f"⚠️ Position {leg_symbol} not found in Tradier, using stored leg")
+                qty = abs(int(leg.get('quantity', 1)))
+                legs.append({
+                    'symbol': leg_symbol,
+                    'expiration': leg['expiration'],
+                    'strike': leg['strike'],
+                    'type': leg['type'],
+                    'quantity': qty,
+                    'side': leg['side']  # Use stored side
+                })
+        
+        if not legs:
+            logging.error(f"❌ No valid legs for closing {trade_id} - all positions may be closed")
+            return
+        
+        proposal = {
+            'symbol': pos['symbol'],
+            'strategy': pos['strategy'],
+            'side': 'CLOSE',
+            'quantity': 1,
+            'price': round(execution_price, 2),
+            'legs': legs,  # Use legs with actual Tradier quantities
+            'context': {
+                'reason': 'Manage Position',
+                'closing_trade_id': trade_id
+            }
+        }
         
         proposal = {
             'symbol': pos['symbol'],
