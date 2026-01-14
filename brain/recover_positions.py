@@ -16,7 +16,8 @@ load_dotenv()
 
 # Config
 ACCESS_TOKEN = os.getenv('TRADIER_ACCESS_TOKEN')
-API_BASE = "https://api.tradier.com/v1"
+# Use sandbox API for paper trading (VA accounts)
+API_BASE = os.getenv('TRADIER_API_BASE', "https://sandbox.tradier.com/v1")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 
@@ -62,21 +63,28 @@ def get_positions(account_id):
     
     data = r.json()
     print(f"🔍 API Response structure: {list(data.keys())}")
+    print(f"🔍 Full API response: {json.dumps(data, indent=2)}")
     
     # Try multiple possible response formats
     pos_data = data.get('positions', {})
     
     # Debug: Print the actual response structure
     print(f"🔍 Positions data type: {type(pos_data)}")
-    if pos_data:
-        print(f"🔍 Positions data keys: {list(pos_data.keys()) if isinstance(pos_data, dict) else 'N/A'}")
+    print(f"🔍 Positions data value: {repr(pos_data)}")
+    if pos_data and isinstance(pos_data, dict):
+        print(f"🔍 Positions data keys: {list(pos_data.keys())}")
     
     # Handle different response formats
-    if pos_data == 'null' or pos_data is None:
-        print("ℹ️ Positions field is 'null' or None")
+    # Tradier sometimes returns the string "null" instead of null/None
+    if pos_data == 'null' or pos_data == 'null' or pos_data is None:
+        print("ℹ️ Positions field is 'null' or None - no positions in this account")
         return []
     
-    if not pos_data:
+    if isinstance(pos_data, str) and pos_data.lower() == 'null':
+        print("ℹ️ Positions field is string 'null' - no positions in this account")
+        return []
+    
+    if not pos_data or (isinstance(pos_data, dict) and len(pos_data) == 0):
         print("ℹ️ Positions field is empty")
         return []
     
