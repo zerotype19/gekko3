@@ -235,20 +235,35 @@ def run_recovery():
         print(f"   ➕ Created {strategy} for {root} ({len(legs)} legs, Entry: ${entry_price:.2f})")
 
     # Determine file path (project root, same as brain_state.json)
+    # This MUST match the logic in MarketFeed.__init__()
     current_dir = os.getcwd()
     if current_dir.endswith('brain'):
+        # Running from brain/ directory, save to parent (project root)
         positions_file = os.path.join(os.path.dirname(current_dir), 'brain_positions.json')
+        print(f"📁 Running from brain/ directory, saving to project root")
     else:
+        # Running from project root
         positions_file = 'brain_positions.json'
+        print(f"📁 Running from project root")
+    
+    # Show absolute path for clarity
+    abs_path = os.path.abspath(positions_file)
+    print(f"📂 File will be saved to: {abs_path}")
     
     # Save
     with open(positions_file, 'w') as f:
         json.dump(brain_format, f, indent=2)
     
-    print(f"\n✅ Recovery Complete!")
-    print(f"💾 Saved {len(brain_format)} trades to '{positions_file}'")
-    print("🚀 Restart the Brain now to adopt these positions.")
-    print(f"   The Brain will log: '♻️ Restored {len(brain_format)} positions from disk'")
+    # Verify file was created
+    if os.path.exists(positions_file):
+        file_size = os.path.getsize(positions_file)
+        print(f"\n✅ Recovery Complete!")
+        print(f"💾 Saved {len(brain_format)} trades to '{abs_path}' ({file_size} bytes)")
+        print("🚀 Restart the Brain now to adopt these positions.")
+        print(f"   The Brain will log: '♻️ Restored {len(brain_format)} positions from disk'")
+    else:
+        print(f"\n❌ ERROR: File was not created at {abs_path}")
+        print("   Please check file permissions and try again.")
 
 if __name__ == "__main__":
     run_recovery()
