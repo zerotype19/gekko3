@@ -15,9 +15,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Config
-ACCESS_TOKEN = os.getenv('TRADIER_ACCESS_TOKEN')
+# IMPORTANT: Use SANDBOX token for paper trading (VA accounts)
+# The Brain uses PRODUCTION token for WebSocket, but recovery needs SANDBOX token
+SANDBOX_TOKEN = os.getenv('TRADIER_SANDBOX_TOKEN') or os.getenv('TRADIER_ACCESS_TOKEN')
+ACCESS_TOKEN = SANDBOX_TOKEN  # Use sandbox token for recovery
 # Use sandbox API for paper trading (VA accounts)
-API_BASE = os.getenv('TRADIER_API_BASE', "https://sandbox.tradier.com/v1")
+API_BASE = "https://sandbox.tradier.com/v1"
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 
@@ -217,10 +220,13 @@ def calculate_entry_price(legs):
 
 def run_recovery():
     if not ACCESS_TOKEN:
-        print("❌ Error: TRADIER_ACCESS_TOKEN not found in .env")
+        print("❌ Error: TRADIER_SANDBOX_TOKEN or TRADIER_ACCESS_TOKEN not found in .env")
+        print("   For paper trading recovery, you need the SANDBOX token.")
+        print("   Set TRADIER_SANDBOX_TOKEN in your .env file.")
         return
 
-    print("🔌 Connecting to Tradier...")
+    print("🔌 Connecting to Tradier Sandbox (Paper Trading)...")
+    print(f"📡 Using API: {API_BASE}")
     account_id = get_account_id()
     if not account_id:
         print("❌ Could not find Account ID.")
