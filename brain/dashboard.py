@@ -1,6 +1,7 @@
 """
-Gekko3 Mission Control Dashboard
+Gekko3 Mission Control (Pro)
 Live visualization of trading system state using Streamlit
+Compatible with Phase C Rich State Export
 """
 
 import streamlit as st
@@ -13,230 +14,151 @@ import plotly.graph_objects as go
 
 # Page configuration
 st.set_page_config(
-    page_title="Gekko3 Mission Control",
+    page_title="Gekko3 Pro Terminal",
     page_icon="🧠",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for better styling
+# Custom CSS
 st.markdown("""
     <style>
-    .main-header {
-        font-size: 2.5rem;
-        font-weight: bold;
-        color: #1f77b4;
-        text-align: center;
-        margin-bottom: 2rem;
-    }
-    .metric-card {
-        background-color: #f0f2f6;
-        padding: 1rem;
-        border-radius: 0.5rem;
-        margin: 0.5rem 0;
-    }
-    .status-online {
-        color: #22c55e;
-        font-weight: bold;
-    }
-    .status-offline {
-        color: #ef4444;
-        font-weight: bold;
-    }
+    .main-header { font-size: 2.5rem; font-weight: bold; color: #1f77b4; text-align: center; margin-bottom: 1rem; }
+    .sub-header { font-size: 1.2rem; font-weight: bold; opacity: 0.8; margin-top: 1rem; }
+    .metric-container { background-color: #1e293b; padding: 15px; border-radius: 10px; color: white; }
+    .regime-tag { padding: 5px 10px; border-radius: 5px; font-weight: bold; color: white; }
     </style>
 """, unsafe_allow_html=True)
 
 # Title
-st.markdown('<p class="main-header">🧠 Gekko3 Mission Control</p>', unsafe_allow_html=True)
+st.markdown('<p class="main-header">🧠 Gekko3 Pro Terminal</p>', unsafe_allow_html=True)
 
-# Sidebar controls
+# Sidebar
 with st.sidebar:
     st.header("⚙️ Controls")
     auto_refresh = st.checkbox("Auto-refresh", value=True)
-    refresh_interval = st.slider("Refresh interval (seconds)", 1, 10, 2)
-    
+    refresh_interval = st.slider("Refresh rate (sec)", 1, 10, 2)
     if st.button("🔄 Refresh Now"):
         st.rerun()
-    
     st.markdown("---")
-    st.header("ℹ️ About")
-    st.markdown("""
-    **Gekko3 Brain Activity Monitor**
-    
-    This dashboard shows real-time metrics from the Gekko3 trading system:
-    - **RSI (2)**: Hypersensitive RSI for scalping
-    - **ADX**: Trend strength indicator
-    - **Flow State**: RISK_ON / RISK_OFF / NEUTRAL
-    - **VIX**: Volatility index
-    - **Trend**: UPTREND / DOWNTREND
-    
-    Data updates automatically from `brain_state.json`
-    """)
+    st.markdown("**System Status**")
+    st.info("Monitoring 'brain_state.json'")
 
-# Main content area
+# Load State
 state_file = 'brain_state.json'
-
-# Check if state file exists
 if not os.path.exists(state_file):
-    st.error("⚠️ Waiting for Brain heartbeat...")
-    st.info("Make sure `brain/main.py` is running and generating state data.")
-    st.stop()
+    st.warning("⚠️ Waiting for Brain heartbeat...")
+    time.sleep(2)
+    st.rerun()
 
-# Load state
 try:
     with open(state_file, 'r') as f:
-        data = json.load(f)
-except json.JSONDecodeError:
-    st.error("⚠️ Invalid JSON in state file. Waiting for valid data...")
-    st.stop()
+        raw_data = json.load(f)
 except Exception as e:
-    st.error(f"⚠️ Error reading state file: {e}")
+    st.error(f"Error reading state: {e}")
     st.stop()
 
-# Check if data is empty
-if not data:
-    st.warning("📭 No symbol data available yet. Waiting for market feed...")
+# Handle New "Rich" Structure vs Old "Flat" Structure
+if 'system' in raw_data and 'market' in raw_data:
+    system_data = raw_data['system']
+    market_data = raw_data['market']
+else:
+    st.error("❌ Incompatible Data Format. Please restart brain/main.py to generate new state.")
     st.stop()
 
-# Display timestamp
-if data and any('timestamp' in data.get(s, {}) for s in data):
-    latest_timestamp = max(
-        data.get(s, {}).get('timestamp', '') 
-        for s in data 
-        if 'timestamp' in data.get(s, {})
-    )
-    if latest_timestamp:
-        try:
-            ts = datetime.fromisoformat(latest_timestamp)
-            time_ago = (datetime.now() - ts).total_seconds()
-            if time_ago < 10:
-                st.success(f"🟢 Online - Last update: {int(time_ago)}s ago")
-            elif time_ago < 60:
-                st.warning(f"🟡 Stale - Last update: {int(time_ago)}s ago")
+# --- SECTION 1: MISSION CONTROL (System Wide) ---
+st.markdown("### 🛡️ Portfolio & Risk")
+
+# 1. System Health Row
+sys_col1, sys_col2, sys_col3, sys_col4 = st.columns(4)
+
+with sys_col1:
+    regime = system_data.get('regime', 'UNKNOWN')
+    regime_color = "gray"
+    if regime == 'LOW_VOL_CHOP': regime_color = "blue"
+    elif regime == 'TRENDING': regime_color = "green"
+    elif regime == 'HIGH_VOL_EXPANSION': regime_color = "orange"
+    elif regime == 'EVENT_RISK': regime_color = "red"
+    
+    st.markdown(f"**Market Regime**")
+    st.markdown(f"<div style='background-color:{regime_color};' class='regime-tag'>{regime}</div>", unsafe_allow_html=True)
+
+with sys_col2:
+    risk = system_data.get('portfolio_risk', {})
+    delta = risk.get('delta', 0)
+    st.metric("Net Delta", f"{delta:+.1f}", delta="Bullish" if delta > 0 else "Bearish")
+
+with sys_col3:
+    theta = risk.get('theta', 0)
+    st.metric("Net Theta", f"${theta:+.1f}/day", delta="Income")
+
+with sys_col4:
+    positions = system_data.get('open_positions', 0)
+    st.metric("Open Positions", str(positions))
+
+st.markdown("---")
+
+# --- SECTION 2: MARKET INTELLIGENCE (Per Symbol) ---
+st.markdown("### 📊 Asset Surveillance")
+
+for symbol, metrics in market_data.items():
+    with st.expander(f"{symbol} - ${metrics.get('price', 0):.2f} ({metrics.get('trend', 'FLAT')})", expanded=True):
+        
+        # Row 1: Key Signals
+        m1, m2, m3, m4 = st.columns(4)
+        
+        with m1:
+            iv_rank = metrics.get('iv_rank', 0)
+            st.metric("IV Rank", f"{iv_rank:.0f}%", delta="Expensive" if iv_rank > 50 else "Cheap", delta_color="inverse")
+            
+        with m2:
+            rsi = metrics.get('rsi', 50)
+            st.metric("RSI (2)", f"{rsi:.1f}")
+            
+        with m3:
+            adx = metrics.get('adx', 0)
+            st.metric("ADX (Trend)", f"{adx:.1f}")
+            
+        with m4:
+            signal = metrics.get('active_signal')
+            if signal:
+                st.warning(f"🚨 SIGNAL: {signal}")
             else:
-                st.error(f"🔴 Offline - Last update: {int(time_ago/60):.1f}min ago")
-        except:
-            pass
+                st.info("Scanning...")
 
-# Create metrics for each symbol
-for symbol, metrics in data.items():
-    st.markdown("---")
-    st.header(f"📊 {symbol} - ${metrics.get('price', 0):.2f}")
-    
-    # Key Metrics Row
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    with col1:
-        rsi = metrics.get('rsi', 50)
-        rsi_delta = None
-        if rsi < 5:
-            rsi_delta = "Oversold"
-        elif rsi > 95:
-            rsi_delta = "Overbought"
-        st.metric("RSI (2)", f"{rsi:.1f}", delta=rsi_delta, delta_color="inverse")
-    
-    with col2:
-        adx = metrics.get('adx', 0)
-        adx_status = "Weak" if adx < 20 else "Strong" if adx > 25 else "Moderate"
-        st.metric("ADX (Trend)", f"{adx:.1f}", delta=adx_status)
-    
-    with col3:
-        flow = metrics.get('flow', 'NEUTRAL')
-        flow_color = {
-            'RISK_ON': '🟢',
-            'RISK_OFF': '🔴',
-            'NEUTRAL': '🟡'
-        }.get(flow, '⚪')
-        st.metric("Flow State", f"{flow_color} {flow}")
-    
-    with col4:
-        vix = metrics.get('vix', 0)
-        vix_status = "Low" if vix < 15 else "High" if vix > 25 else "Normal"
-        st.metric("VIX", f"{vix:.2f}", delta=vix_status)
-    
-    with col5:
-        trend = metrics.get('trend', 'UNKNOWN')
-        trend_emoji = {
-            'UPTREND': '📈',
-            'DOWNTREND': '📉',
-            'UNKNOWN': '➡️'
-        }.get(trend, '➡️')
-        st.metric("Trend", f"{trend_emoji} {trend}")
-    
-    # Additional metrics
-    col6, col7, col8 = st.columns(3)
-    
-    with col6:
-        velocity = metrics.get('volume_velocity', 1.0)
-        st.metric("Volume Velocity", f"{velocity:.2f}x")
-    
-    with col7:
-        candle_count = metrics.get('candle_count', 0)
-        is_warm = metrics.get('is_warm', False)
-        warm_status = "✅ Ready" if is_warm else f"⏳ {candle_count}/200"
-        st.metric("Warmup Status", warm_status)
-    
-    with col8:
-        price = metrics.get('price', 0)
-        st.metric("Current Price", f"${price:.2f}")
-    
-    # Visual Gauge for RSI
-    st.subheader("RSI Heatmap")
-    rsi_gauge = go.Figure(go.Indicator(
-        mode="gauge+number+delta",
-        value=rsi,
-        title={'text': f"{symbol} RSI (2)"},
-        domain={'x': [0, 1], 'y': [0, 1]},
-        gauge={
-            'axis': {'range': [0, 100]},
-            'bar': {'color': "darkblue"},
-            'steps': [
-                {'range': [0, 5], 'color': "lightgreen"},      # Oversold (Buy Zone)
-                {'range': [5, 30], 'color': "lightblue"},      # Oversold region
-                {'range': [30, 70], 'color': "gray"},         # Neutral
-                {'range': [70, 95], 'color': "lightcoral"},   # Overbought region
-                {'range': [95, 100], 'color': "red"}          # Overbought (Sell Zone)
-            ],
-            'threshold': {
-                'line': {'color': "red", 'width': 4},
-                'thickness': 0.75,
-                'value': 90
-            }
-        }
-    ))
-    rsi_gauge.update_layout(height=300)
-    st.plotly_chart(rsi_gauge, use_container_width=True)
-    
-    # ADX Gauge
-    st.subheader("Trend Strength (ADX)")
-    adx_gauge = go.Figure(go.Indicator(
-        mode="gauge+number",
-        value=adx,
-        title={'text': f"{symbol} ADX"},
-        domain={'x': [0, 1], 'y': [0, 1]},
-        gauge={
-            'axis': {'range': [0, 50]},
-            'bar': {'color': "darkgreen"},
-            'steps': [
-                {'range': [0, 20], 'color': "lightgray"},   # Weak trend (Iron Condor zone)
-                {'range': [20, 25], 'color': "yellow"},    # Moderate
-                {'range': [25, 50], 'color': "lightgreen"} # Strong trend
-            ],
-            'threshold': {
-                'line': {'color': "red", 'width': 4},
-                'thickness': 0.75,
-                'value': 20  # Threshold for Iron Condor strategy
-            }
-        }
-    ))
-    adx_gauge.update_layout(height=300)
-    st.plotly_chart(adx_gauge, use_container_width=True)
+        # Row 2: Visuals
+        g1, g2 = st.columns(2)
+        
+        with g1:
+            # RSI Gauge
+            fig_rsi = go.Figure(go.Indicator(
+                mode = "gauge+number",
+                value = rsi,
+                title = {'text': "RSI Heatmap"},
+                gauge = {
+                    'axis': {'range': [0, 100]},
+                    'bar': {'color': "white"},
+                    'steps': [
+                        {'range': [0, 10], 'color': "green"},
+                        {'range': [10, 90], 'color': "gray"},
+                        {'range': [90, 100], 'color': "red"}],
+                }
+            ))
+            fig_rsi.update_layout(height=200, margin=dict(l=20,r=20,t=30,b=20))
+            st.plotly_chart(fig_rsi, use_container_width=True)
+
+        with g2:
+            # IV Rank Bar
+            st.markdown(f"**Volatility Context (IV Rank: {iv_rank:.0f})**")
+            st.progress(int(min(iv_rank, 100)))
+            if iv_rank < 20:
+                st.caption("Environment: BUY PREMIUM (Long Spreads / Calendars)")
+            elif iv_rank > 50:
+                st.caption("Environment: SELL PREMIUM (Iron Condors / Credit Spreads)")
+            else:
+                st.caption("Environment: NEUTRAL")
 
 # Footer
-st.markdown("---")
-st.caption(f"🔄 Auto-updating from Gekko3 Core Engine | Last refresh: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
-# Auto-refresh logic
 if auto_refresh:
     time.sleep(refresh_interval)
     st.rerun()
