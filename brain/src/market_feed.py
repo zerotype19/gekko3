@@ -592,6 +592,9 @@ class MarketFeed:
         # CRITICAL: Fetch actual positions from Tradier to get correct quantities
         # Recovered positions may have wrong quantities if partially filled or adjusted
         actual_positions = await self._get_actual_positions()
+        if not actual_positions:
+            logging.warning(f"⚠️ Could not fetch actual positions for {trade_id}, using stored legs")
+            actual_positions = {}  # Will use fallback
         
         # Add Aggressive Buffer to Limit Price (Pay more to close)
         execution_price = limit_price + 0.05
@@ -604,19 +607,23 @@ class MarketFeed:
             
             if actual_pos:
                 # Use actual quantity from Tradier (can be negative for shorts)
-                actual_qty = abs(float(actual_pos['quantity']))
+                actual_qty_raw = float(actual_pos['quantity'])
+                actual_qty = abs(actual_qty_raw)
                 # Determine side based on actual Tradier quantity
                 # Negative quantity = short position = was SELL to open = need BUY to close
                 # Positive quantity = long position = was BUY to open = need SELL to close
-                if float(actual_pos['quantity']) < 0:
+                if actual_qty_raw < 0:
                     # Short position: need to BUY to close
                     side = 'SELL'  # Gatekeeper maps SELL->buy_to_close
+                    position_type = 'SHORT'
                 else:
                     # Long position: need to SELL to close
                     side = 'BUY'  # Gatekeeper maps BUY->sell_to_close
+                    position_type = 'LONG'
                 
                 qty = int(actual_qty)
                 if qty > 0:
+                    logging.info(f"🔍 {leg_symbol}: Tradier qty={actual_qty_raw} ({position_type}) -> Send side='{side}' qty={qty}")
                     legs.append({
                         'symbol': leg_symbol,
                         'expiration': leg['expiration'],
