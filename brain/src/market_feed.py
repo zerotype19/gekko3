@@ -350,6 +350,36 @@ class MarketFeed:
                     pos['status'] = 'OPEN'
                     continue
                 
+                # Check if we're waiting for cancellation to complete
+                if pos.get('cancelling'):
+                    # Wait for cancellation to complete (check status)
+                    status = await self._get_order_status(order_id)
+                    if status in ['canceled', 'rejected', 'expired', 'filled']:
+                        # Cancellation complete (or filled), reset to OPEN
+                        logging.info(f"✅ Order {order_id} {status}. Will retry after delay.")
+                        pos['status'] = 'OPEN'
+                        del pos['close_order_id']
+                        del pos['cancelling']
+                        if 'closing_timestamp' in pos:
+                            del pos['closing_timestamp']
+                        # Add retry delay timestamp to prevent immediate retry (wait 5 seconds)
+                        pos['last_close_attempt'] = now
+                        self._save_positions_to_disk()
+                    elif status == 'pending' or status == 'open':
+                        # Still pending, wait another cycle
+                        continue
+                    else:
+                        # Unknown status, assume cancelled and retry
+                        logging.warning(f"⚠️ Order {order_id} status unknown: {status}. Assuming cancelled.")
+                        pos['status'] = 'OPEN'
+                        del pos['close_order_id']
+                        del pos['cancelling']
+                        if 'closing_timestamp' in pos:
+                            del pos['closing_timestamp']
+                        pos['last_close_attempt'] = now
+                        self._save_positions_to_disk()
+                    continue
+                
                 status = await self._get_order_status(order_id)
                 
                 if status == 'filled':
@@ -359,11 +389,13 @@ class MarketFeed:
                     continue
                 
                 elif status in ['canceled', 'rejected', 'expired']:
-                    logging.warning(f"⚠️ Closing Order {status} for {trade_id}. Retrying...")
+                    logging.warning(f"⚠️ Closing Order {status} for {trade_id}. Will retry after delay...")
                     pos['status'] = 'OPEN'  # Reset to try again
                     del pos['close_order_id']
                     if 'closing_timestamp' in pos:
                         del pos['closing_timestamp']
+                    # Add retry delay timestamp to prevent immediate retry
+                    pos['last_close_attempt'] = now
                     self._save_positions_to_disk()
                     continue
                 
@@ -373,9 +405,14 @@ class MarketFeed:
                     if sent_time:
                         # If pending for > 2 minutes, cancel and retry (likely price moved)
                         if (now - sent_time).total_seconds() > 120:
-                            logging.info(f"⏳ Order {order_id} pending too long. Cancelling to repost.")
-                            await self._cancel_order(order_id)
-                            # Next loop will see 'canceled' and reset to OPEN
+                            if not pos.get('cancelling'):  # Only cancel once
+                                logging.info(f"⏳ Order {order_id} pending too long. Cancelling to repost.")
+                                await self._cancel_order(order_id)
+                                # Mark as cancelling and wait for cancellation to complete
+                                pos['cancelling'] = True
+                                self._save_positions_to_disk()
+                                # Wait a moment for cancellation to process
+                                await asyncio.sleep(2)
                     continue
                 
                 else:
@@ -486,6 +523,15 @@ class MarketFeed:
                 reason = "EOD Auto-Close"
 
             if should_close:
+                # Check if we need to wait before retrying (after cancellation/rejection)
+                last_attempt = pos.get('last_close_attempt')
+                if last_attempt:
+                    seconds_since_attempt = (now - last_attempt).total_seconds()
+                    if seconds_since_attempt < 5:  # Wait 5 seconds after cancellation/rejection
+                        continue  # Skip this cycle, try again next time
+                    # Enough time has passed, clear the delay flag
+                    del pos['last_close_attempt']
+                
                 logging.info(f"🛑 ATTEMPTING CLOSE {trade_id} | P&L: {pnl_pct:.1f}% | Reason: {reason}")
                 await self._execute_close(trade_id, pos, cost_to_close)
         
@@ -512,13 +558,29 @@ class MarketFeed:
         # Standard: +0.05. New Aggressive: +0.10 if PnL is good, or keep 0.05
         execution_price = limit_price + 0.05
         
+        # CRITICAL: Ensure quantities are positive integers for closing
+        # The legs should have the original quantities from when we opened
+        # Gatekeeper will map sides correctly (SELL->buy_to_close, BUY->sell_to_close)
+        legs = []
+        for leg in pos['legs']:
+            # Ensure quantity is positive integer
+            qty = abs(int(leg.get('quantity', 1)))
+            legs.append({
+                'symbol': leg['symbol'],
+                'expiration': leg['expiration'],
+                'strike': leg['strike'],
+                'type': leg['type'],
+                'quantity': qty,  # Use absolute value, ensure integer
+                'side': leg['side']  # Keep original side (SELL/BUY), Gatekeeper will map correctly
+            })
+        
         proposal = {
             'symbol': pos['symbol'],
             'strategy': pos['strategy'],
             'side': 'CLOSE',
-            'quantity': 1,
+            'quantity': 1,  # Top-level quantity (usually 1 for spreads)
             'price': round(execution_price, 2),
-            'legs': pos['legs'],
+            'legs': legs,  # Use cleaned legs with absolute quantities
             'context': {
                 'reason': 'Manage Position',
                 'closing_trade_id': trade_id
