@@ -143,12 +143,23 @@ class MarketFeed:
     async def _manage_positions_loop(self):
         """Background task to monitor and manage open positions"""
         logging.info("🛡️ Position Manager: ONLINE")
+        last_status_log = datetime.now()
         while not self.stop_signal:
             try:
                 if self.open_positions:
                     await self._manage_positions()
+                    # Log status every 30 seconds
+                    if (datetime.now() - last_status_log).seconds >= 30:
+                        logging.info(f"📊 MONITORING {len(self.open_positions)} open positions")
+                        last_status_log = datetime.now()
+                else:
+                    # Check less frequently when no positions
+                    await asyncio.sleep(30)
+                    continue
             except Exception as e:
                 logging.error(f"⚠️ Manager Error: {e}")
+                import traceback
+                traceback.print_exc()
             await asyncio.sleep(5)  # Check every 5 seconds
 
     async def _get_quotes(self, symbols: List[str]) -> Dict[str, Dict]:
@@ -220,6 +231,7 @@ class MarketFeed:
         # 2. Batch fetch prices
         quotes = await self._get_quotes(all_legs)
         if not quotes:
+            logging.warning(f"⚠️ Failed to fetch quotes for {len(all_legs)} option symbols. Positions: {len(self.open_positions)}")
             return
 
         # 3. Check Rules
@@ -262,7 +274,11 @@ class MarketFeed:
             # Store live greeks in position for debugging
             pos['live_greeks'] = {'delta': trade_delta, 'theta': trade_theta, 'vega': trade_vega}
             
-            if missing_quote or cost_to_close <= 0:
+            if missing_quote:
+                logging.warning(f"⚠️ Missing quotes for {trade_id} ({symbol}). Skipping this cycle.")
+                continue
+            if cost_to_close <= 0:
+                logging.warning(f"⚠️ Invalid cost_to_close ({cost_to_close}) for {trade_id}. Skipping.")
                 continue
             
             entry_credit = pos['entry_price']
@@ -374,6 +390,10 @@ class MarketFeed:
         
         # Log Portfolio Risk (after checking all positions)
         self._log_portfolio_risk()
+        
+        # Log position summary if we have positions
+        if self.open_positions:
+            logging.debug(f"📋 Position Summary: {len(self.open_positions)} positions being monitored")
 
     def _log_portfolio_risk(self):
         """Log AND STORE total portfolio exposure (The 'Risk Dashboard')"""
@@ -421,7 +441,13 @@ class MarketFeed:
         resp = await self.gatekeeper_client.send_proposal(proposal)
         if resp and resp.get('status') == 'APPROVED':
             del self.open_positions[trade_id]
-            logging.info(f"✅ Closed {trade_id}")
+            logging.info(f"✅ Closed {trade_id} | Remaining positions: {len(self.open_positions)}")
+        elif resp and resp.get('status') == 'REJECTED':
+            logging.error(f"❌ Close REJECTED for {trade_id}: {resp.get('reason', 'Unknown reason')}")
+            # Keep position in tracking for retry (will retry on next cycle)
+        else:
+            logging.error(f"❌ Close FAILED for {trade_id}: {resp}")
+            # Keep position in tracking for retry
 
     # --- VIX Polling ---
     async def _poll_vix_loop(self):
@@ -1187,4 +1213,4 @@ class MarketFeed:
                 'timestamp': datetime.now(),
                 'highest_pnl': -100.0
             }
-            logging.info(f"📝 Tracking Complex Trade: {trade_id}")
+            logging.info(f"📝 Tracking Complex Trade: {trade_id} | Total positions: {len(self.open_positions)}")
