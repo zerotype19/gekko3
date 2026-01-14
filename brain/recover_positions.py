@@ -17,7 +17,13 @@ load_dotenv()
 # Config
 # IMPORTANT: Use SANDBOX token for paper trading (VA accounts)
 # The Brain uses PRODUCTION token for WebSocket, but recovery needs SANDBOX token
-SANDBOX_TOKEN = os.getenv('TRADIER_SANDBOX_TOKEN') or os.getenv('TRADIER_ACCESS_TOKEN')
+# Try to get sandbox token from env, or use the known sandbox token
+SANDBOX_TOKEN = os.getenv('TRADIER_SANDBOX_TOKEN')
+if not SANDBOX_TOKEN:
+    # Fallback: Use the known sandbox token from TRADIER_CREDENTIALS.md
+    SANDBOX_TOKEN = 'XFE6d2z7hJnleNbpQ789otJmvW3z'
+    print("⚠️ Using hardcoded sandbox token. Set TRADIER_SANDBOX_TOKEN in .env for security.")
+
 ACCESS_TOKEN = SANDBOX_TOKEN  # Use sandbox token for recovery
 # Use sandbox API for paper trading (VA accounts)
 API_BASE = "https://sandbox.tradier.com/v1"
