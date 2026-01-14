@@ -27,10 +27,20 @@ export const CONSTITUTION: RiskConfig = {
   minDte: 0,    // Allows Scalper (0DTE)
   maxDte: 60,   // Allows Trend/Farmer (30-45 DTE)
 
-  // Execution Constraints
+  // Correlation Groups (Phase C)
+  // Assets in the same group share a risk bucket
+  correlationGroups: {
+    'US_INDICES': ['SPY', 'QQQ', 'IWM', 'DIA'] as const,
+    'TECH': ['QQQ', 'XLK'] as const, // Example expansion
+  },
 
-  
-  
+  // Risk Limits (Phase C)
+  riskLimits: {
+    maxCorrelatedPositions: 2, // MAX 2 directional trades per group (e.g., 1 SPY + 1 QQQ is ok, but not 3)
+    maxTotalPositions: 5,
+  },
+
+  // Execution Constraints
   staleProposalMs: 10000,       // Reject orders older than 10 seconds
   forceEodCloseEt: '15:45',     // Hard close at 3:45 PM ET
 };

@@ -140,6 +140,41 @@ export class GatekeeperDO {
   }
 
   /**
+   * Get open position metadata (for correlation checking)
+   * Returns list of { symbol, bias, strategy }
+   */
+  async getOpenPositionMetadata(): Promise<Array<{ symbol: string; bias: string; strategy: string }>> {
+    const metadataKey = 'positionMetadata';
+    const stored = await this.state.storage.get<Record<string, { symbol: string; bias: string; strategy: string }>>(metadataKey);
+    if (!stored) {
+      return [];
+    }
+    return Object.values(stored);
+  }
+
+  /**
+   * Save position metadata (called when trade opens)
+   */
+  async savePositionMetadata(tradeId: string, data: { symbol: string; bias: string; strategy: string }): Promise<void> {
+    const metadataKey = 'positionMetadata';
+    const stored = await this.state.storage.get<Record<string, { symbol: string; bias: string; strategy: string }>>(metadataKey) || {};
+    stored[tradeId] = data;
+    await this.state.storage.put(metadataKey, stored);
+  }
+
+  /**
+   * Remove position metadata (called when trade closes)
+   */
+  async removePositionMetadata(tradeId: string): Promise<void> {
+    const metadataKey = 'positionMetadata';
+    const stored = await this.state.storage.get<Record<string, { symbol: string; bias: string; strategy: string }>>(metadataKey);
+    if (stored && stored[tradeId]) {
+      delete stored[tradeId];
+      await this.state.storage.put(metadataKey, stored);
+    }
+  }
+
+  /**
    * Get position count for a specific symbol
    */
   async getSymbolPositionCount(symbol: string): Promise<number> {
@@ -413,6 +448,39 @@ export class GatekeeperDO {
       }
     }
 
+    // 6. Correlation Guard (Phase C, Step 2)
+    const bias = proposal.context?.trend_state; // 'bullish', 'bearish', 'neutral'
+    
+    if (proposal.side === 'OPEN' && bias && bias !== 'neutral' && CONSTITUTION.correlationGroups) {
+      // Find which group this symbol belongs to
+      let groupName: string | null = null;
+      for (const [name, symbols] of Object.entries(CONSTITUTION.correlationGroups)) {
+        if (symbols.includes(proposal.symbol)) {
+          groupName = name;
+          break;
+        }
+      }
+
+      if (groupName && CONSTITUTION.riskLimits?.maxCorrelatedPositions) {
+        // Count existing positions in this group with SAME bias
+        const openPositions = await this.getOpenPositionMetadata();
+        const groupSymbols = CONSTITUTION.correlationGroups[groupName];
+        
+        const correlatedCount = openPositions.filter(p => 
+          groupSymbols.includes(p.symbol) && 
+          p.bias === bias
+        ).length;
+
+        if (correlatedCount >= CONSTITUTION.riskLimits.maxCorrelatedPositions) {
+          return { 
+            status: 'REJECTED', 
+            rejectionReason: `Correlation Limit Hit: ${correlatedCount} open ${bias} trades in ${groupName} (max: ${CONSTITUTION.riskLimits.maxCorrelatedPositions})`, 
+            evaluatedAt 
+          };
+        }
+      }
+    }
+
     // Only check symbol concentration if we are OPENING a new position
     if (proposal.side === 'OPEN') {
       const symbolPositionCount = await this.getSymbolPositionCount(proposal.symbol);
@@ -619,6 +687,33 @@ export class GatekeeperDO {
             { name: 'Order ID', value: `${orderResult.order_id}`, inline: false }
           ]
         );
+
+        // Phase C: Track Position Metadata for Correlation Guard
+        if (proposal.side === 'OPEN') {
+          const bias = proposal.context?.trend_state || 'neutral';
+          await this.savePositionMetadata(orderResult.order_id, {
+            symbol: proposal.symbol,
+            bias: bias,
+            strategy: proposal.strategy,
+          });
+        } else if (proposal.side === 'CLOSE') {
+          // For CLOSE, find the most recent OPEN order for this symbol/strategy
+          // This matches the position being closed
+          const orderLookup = await this.env.DB.prepare(
+            `SELECT o.id 
+             FROM orders o
+             JOIN proposals p ON o.proposal_id = p.id
+             WHERE p.symbol = ? AND p.strategy = ? AND p.side = 'OPEN'
+             ORDER BY o.created_at DESC
+             LIMIT 1`
+          )
+            .bind(proposal.symbol, proposal.strategy)
+            .first<{ id: string }>();
+          
+          if (orderLookup) {
+            await this.removePositionMetadata(orderLookup.id);
+          }
+        }
 
         return new Response(
           JSON.stringify({

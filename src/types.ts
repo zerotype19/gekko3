@@ -84,6 +84,13 @@ export interface RiskConfig {
   minDte: number;
   maxDte: number;
 
+  // Correlation Groups (Phase C)
+  correlationGroups?: Record<string, readonly string[]>;
+  riskLimits?: {
+    maxCorrelatedPositions?: number;
+    maxTotalPositions?: number;
+  };
+
   // Execution constraints
   staleProposalMs: number;
   forceEodCloseEt: string; // "HH:MM" format in ET timezone
