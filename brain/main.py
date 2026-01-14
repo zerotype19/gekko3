@@ -19,6 +19,7 @@ load_dotenv()
 from src.alpha_engine import AlphaEngine
 from src.market_feed import MarketFeed
 from src.gatekeeper_client import GatekeeperClient
+from src.regime_engine import RegimeEngine
 from src.notifier import get_notifier
 
 # Configure Logging
@@ -47,10 +48,14 @@ class BrainSupervisor:
         self.alpha_engine = AlphaEngine(lookback_minutes=400)  # Increased to support SMA(200) + buffer
         logging.info("✅ Alpha Engine initialized")
         
+        self.regime_engine = RegimeEngine(self.alpha_engine)
+        logging.info("✅ Regime Engine initialized")
+        
         self.market_feed = MarketFeed(
             alpha_engine=self.alpha_engine,
             gatekeeper_client=self.gatekeeper,
-            symbols=['SPY', 'QQQ']
+            regime_engine=self.regime_engine,
+            symbols=['SPY', 'QQQ', 'IWM', 'DIA']
         )
         logging.info("✅ Market Feed initialized")
         

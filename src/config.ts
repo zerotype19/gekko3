@@ -7,8 +7,8 @@
 import type { RiskConfig } from './types';
 
 export const CONSTITUTION: RiskConfig = {
-  // Universe: Only these symbols are allowed
-  allowedSymbols: ['SPY', 'QQQ'] as const,
+  // Universe: Expanded to include IWM (Small Caps) and DIA (Dow)
+  allowedSymbols: ['SPY', 'QQQ', 'IWM', 'DIA'] as const,
 
   // Strategy: Only credit spreads are permitted
   allowedStrategies: ['CREDIT_SPREAD'] as const,

@@ -41,11 +41,13 @@ class MarketFeed:
         self,
         alpha_engine: AlphaEngine,
         gatekeeper_client: GatekeeperClient,
+        regime_engine,
         symbols: list = None
     ):
         self.alpha_engine = alpha_engine
         self.gatekeeper_client = gatekeeper_client
-        self.symbols = symbols or ['SPY', 'QQQ']
+        self.regime_engine = regime_engine
+        self.symbols = symbols or ['SPY', 'QQQ', 'IWM', 'DIA']
         
         self.access_token = os.getenv('TRADIER_ACCESS_TOKEN', '')
         if not self.access_token:
@@ -430,6 +432,10 @@ class MarketFeed:
             if now - self.last_proposal_time[symbol] < self.min_proposal_interval:
                 return
 
+        # 1. GET REGIME (The Governance Check)
+        # We use SPY as the global proxy for the market state
+        current_regime = self.regime_engine.get_regime('SPY')
+        
         indicators = self.alpha_engine.get_indicators(symbol)
         
         # Signal Setup
@@ -442,10 +448,13 @@ class MarketFeed:
         current_hour = now.hour
         current_minute = now.minute
         
-        # 1. ORB (Opening Range Breakout) - 10:00-11:30
+        # -----------------------------------------------
+        # STRATEGY 1: ORB (Opening Range Breakout)
+        # PERMISSION: All Regimes EXCEPT Event Risk
+        # -----------------------------------------------
         is_orb_window = (current_hour == 10) or (current_hour == 11 and current_minute < 30)
         
-        if is_orb_window and indicators.get('candle_count', 0) >= 30:
+        if current_regime.value != 'EVENT_RISK' and is_orb_window and indicators.get('candle_count', 0) >= 30:
             orb = self.alpha_engine.get_opening_range(symbol)
             if orb['complete']:
                 price = indicators['price']
@@ -464,10 +473,13 @@ class MarketFeed:
                     option_type = 'CALL'
                     bias = 'bearish'
 
-        # 2. Range Farmer (Iron Condor) - 1:00 PM
-        if not signal and current_hour == 13 and 0 <= current_minute < 5:
+        # -----------------------------------------------
+        # STRATEGY 2: RANGE FARMER (Iron Condor)
+        # PERMISSION: ONLY in LOW_VOL_CHOP
+        # -----------------------------------------------
+        if not signal and current_regime.value == 'LOW_VOL_CHOP' and current_hour == 13 and 0 <= current_minute < 5:
             adx = self.alpha_engine.get_adx(symbol)
-            if adx < 20: # Low Trend
+            if adx is not None and adx < 20: # Low Trend
                 logging.info(f"🚜 FARMING: {symbol} ADX {adx:.1f}. Opening Iron Condor.")
                 # FIX: Use 'CREDIT_SPREAD' so Gatekeeper accepts the order
                 # Leg 1: Bear Call Spread
@@ -477,8 +489,11 @@ class MarketFeed:
                 self.last_proposal_time[symbol] = now
                 return
 
-        # 3. Scalper (0DTE) - All Day
-        if not signal:
+        # -----------------------------------------------
+        # STRATEGY 3: SCALPER (0DTE)
+        # PERMISSION: TRENDING or HIGH_VOL_EXPANSION
+        # -----------------------------------------------
+        if not signal and current_regime.value in ['TRENDING', 'HIGH_VOL_EXPANSION']:
             rsi_2 = self.alpha_engine.get_rsi(symbol, period=2)
             if rsi_2 is not None and (rsi_2 < 5 or rsi_2 > 95):
                 zero_dte = await self._get_0dte_expiration(symbol)
@@ -497,6 +512,14 @@ class MarketFeed:
                         bias = 'bearish'
                         
                     if signal:
+                        # ADDITIONAL FILTER (From Feedback Audit):
+                        # Don't short a strong uptrend
+                        trend_strength = self.alpha_engine.get_adx(symbol)
+                        if signal == 'SCALP_BEAR_CALL' and trend_strength is not None and trend_strength > 40:
+                            logging.info(f"🚫 SKIPPING SCALP: Trend too strong (ADX {trend_strength:.1f})")
+                            signal = None
+                            return
+                        
                         logging.info(f"⚡ SCALP: {symbol} RSI(2) {rsi_2:.1f}. 0DTE {option_type}.")
                         await self._send_proposal(symbol, strategy, side, option_type, indicators, bias, force_expiration=zero_dte)
                         self.last_signals[symbol] = {'signal': signal, 'timestamp': now}
@@ -531,8 +554,11 @@ class MarketFeed:
                 self.last_proposal_time[symbol] = now
                 return
 
-        # 4. Trend Strategy (The Core) - After Warmup
-        if not signal:
+        # -----------------------------------------------
+        # STRATEGY 4: TREND ENGINE
+        # PERMISSION: ONLY in TRENDING
+        # -----------------------------------------------
+        if not signal and current_regime.value == 'TRENDING':
             if not indicators.get('is_warm', False):
                 # Log progress occasionally
                 if indicators.get('candle_count', 0) % 60 == 0:
