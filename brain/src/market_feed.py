@@ -1161,7 +1161,8 @@ class MarketFeed:
                 'timestamp': datetime.now(),
                 'highest_pnl': -100.0  # NEW: Initialize for Trailing Stop tracking
             }
-            logging.info(f"📝 Tracking Trade: {trade_id}")
+            logging.info(f"📝 Tracking Trade: {trade_id} | Total positions: {len(self.open_positions)}")
+            self._save_positions_to_disk()  # Persist new position
 
     async def _send_complex_proposal(self, symbol, strategy, side, legs, indicators, bias):
         """Send a pre-constructed multi-leg proposal"""
@@ -1220,3 +1221,4 @@ class MarketFeed:
                 'highest_pnl': -100.0
             }
             logging.info(f"📝 Tracking Complex Trade: {trade_id} | Total positions: {len(self.open_positions)}")
+            self._save_positions_to_disk()  # Persist new position
