@@ -588,6 +588,52 @@ class MarketFeed:
                 option_type = 'CALL'
                 bias = 'bearish'
 
+        # Get IV Rank for complex strategies
+        iv_rank = self.alpha_engine.get_iv_rank(symbol)
+
+        # -----------------------------------------------
+        # STRATEGY 5: IRON BUTTERFLY ("The Pin")
+        # PERMISSION: CHOP Regime + High IV
+        # -----------------------------------------------
+        if not signal and current_regime.value == 'LOW_VOL_CHOP':
+            # Only enter at lunchtime (12:00 - 13:00) when things settle
+            if current_hour == 12:
+                if iv_rank > 50:  # Premium is expensive -> Sell it
+                    logging.info(f"🦋 BUTTERFLY: {symbol} High IV ({iv_rank:.0f}) in Chop. Targeting Pin.")
+                    
+                    # Manual Proposal Construction for Complex Strategy
+                    exp = await self._get_best_expiration(symbol)
+                    if exp:
+                        chain = await self._get_option_chain(symbol, exp)
+                        if chain:
+                            legs = await self._find_iron_butterfly_legs(chain, indicators['price'], exp)
+                            if legs:
+                                await self._send_complex_proposal(symbol, 'IRON_BUTTERFLY', 'OPEN', legs, indicators, 'neutral')
+                                self.last_proposal_time[symbol] = now
+                                return
+
+        # -----------------------------------------------
+        # STRATEGY 6: RATIO SPREAD ("The Hedge")
+        # PERMISSION: ANY Regime (Defense) + Low IV
+        # -----------------------------------------------
+        if not signal and iv_rank < 20:  # Vol is dirt cheap
+            # Check if we already have downside protection? (TODO)
+            # Only fire occasionally to avoid over-hedging
+            if current_minute == 30:  # Check once an hour
+                logging.info(f"🛡️ HEDGE: {symbol} IV Low ({iv_rank:.0f}). Looking for Ratio Spread.")
+                
+                exp = await self._get_best_expiration(symbol)
+                if exp:
+                    chain = await self._get_option_chain(symbol, exp)
+                    if chain:
+                        legs = await self._find_ratio_spread_legs(chain, indicators['price'], exp)
+                        if legs:
+                            # Only trade if we can do it for a credit or zero cost
+                            # (Pricing check logic would go here, trusting Gatekeeper Limit for now)
+                            await self._send_complex_proposal(symbol, 'RATIO_SPREAD', 'OPEN', legs, indicators, 'bearish')
+                            self.last_proposal_time[symbol] = now
+                            return
+
         if signal:
             last = self.last_signals.get(symbol, {})
             if last.get('signal') == signal and (now - last.get('timestamp')).seconds < 300:
@@ -719,6 +765,117 @@ class MarketFeed:
                 if self.stop_signal:
                     break
                 await asyncio.sleep(1)
+
+    def _make_leg(self, chain, expiration, strike, o_type, side, qty):
+        """Helper to build a leg object"""
+        # Find exact option in chain
+        candidates = [x for x in chain if 
+                      x.get('option_type') == o_type.lower() and 
+                      abs(float(x.get('strike', 0)) - strike) < 0.01]
+        if not candidates:
+            return None
+        opt = candidates[0]
+        return {
+            'symbol': opt['symbol'],
+            'expiration': expiration,
+            'strike': float(opt['strike']),
+            'type': o_type,
+            'quantity': qty,
+            'side': side
+        }
+
+    async def _find_iron_butterfly_legs(self, chain: List[Dict], price: float, expiration: str) -> List[Dict]:
+        """
+        Construct Iron Butterfly: Sell ATM Call/Put, Buy OTM Wings
+        Target: Sell closest strike to Price. Buy wings $5-10 away.
+        """
+        # 1. Find ATM Strike (Body)
+        strikes = sorted(list(set(float(x.get('strike', 0)) for x in chain)))
+        if not strikes:
+            return []
+        atm_strike = min(strikes, key=lambda x: abs(x - price))
+        
+        # 2. Find Wings (Protection)
+        # Dynamic width based on price (approx 1-2%)
+        width = 5.0 if price < 200 else 10.0
+        upper_wing = atm_strike + width
+        lower_wing = atm_strike - width
+        
+        # 3. Select Legs
+        legs = []
+        # Short ATM Call
+        call_leg = self._make_leg(chain, expiration, atm_strike, 'CALL', 'SELL', 1)
+        if call_leg:
+            legs.append(call_leg)
+        # Short ATM Put
+        put_leg = self._make_leg(chain, expiration, atm_strike, 'PUT', 'SELL', 1)
+        if put_leg:
+            legs.append(put_leg)
+        # Long OTM Call (Upper Wing)
+        upper_leg = self._make_leg(chain, expiration, upper_wing, 'CALL', 'BUY', 1)
+        if upper_leg:
+            legs.append(upper_leg)
+        # Long OTM Put (Lower Wing)
+        lower_leg = self._make_leg(chain, expiration, lower_wing, 'PUT', 'BUY', 1)
+        if lower_leg:
+            legs.append(lower_leg)
+        
+        # Verify we found all 4
+        if len(legs) != 4:
+            return []
+        return legs
+
+    async def _find_ratio_spread_legs(self, chain: List[Dict], price: float, expiration: str) -> List[Dict]:
+        """
+        Construct Put Ratio Backspread: Sell 1 ATM Put, Buy 2 OTM Puts
+        Target: Sell 30 Delta, Buy 15 Delta (approx).
+        """
+        # Helper to find option by delta
+        def find_by_delta(c_chain, target_delta, o_type):
+            # Sort by distance to target delta
+            candidates = [x for x in c_chain if x.get('option_type', '').lower() == o_type.lower()]
+            if not candidates:
+                return None
+            # Filter out options without delta data
+            with_delta = [x for x in candidates if x.get('greeks', {}).get('delta') is not None]
+            if not with_delta:
+                return None
+            return min(with_delta, key=lambda x: abs(float(x.get('greeks', {}).get('delta', 0)) - target_delta))
+
+        # 1. Sell Leg (Short 1) - Near the money
+        short_opt = find_by_delta(chain, -0.30, 'PUT')
+        if not short_opt:
+            return []
+        
+        # 2. Buy Leg (Long 2) - Further OTM
+        long_opt = find_by_delta(chain, -0.15, 'PUT')
+        if not long_opt:
+            return []
+        
+        # Ensure distinct strikes (long must be lower strike for puts)
+        if float(long_opt.get('strike', 0)) >= float(short_opt.get('strike', 0)):
+            return []
+
+        legs = []
+        # Sell 1
+        legs.append({
+            'symbol': short_opt['symbol'],
+            'expiration': expiration,
+            'strike': float(short_opt['strike']),
+            'type': 'PUT',
+            'quantity': 1,
+            'side': 'SELL'
+        })
+        # Buy 2
+        legs.append({
+            'symbol': long_opt['symbol'],
+            'expiration': expiration,
+            'strike': float(long_opt['strike']),
+            'type': 'PUT',
+            'quantity': 2,  # RATIO!
+            'side': 'BUY'
+        })
+        return legs
 
     async def _send_proposal(self, symbol, strategy, side, option_type, indicators, bias, force_expiration=None):
         """Constructs proposal using REAL Delta Selection and REAL Pricing"""
@@ -866,3 +1023,60 @@ class MarketFeed:
                 'highest_pnl': -100.0  # NEW: Initialize for Trailing Stop tracking
             }
             logging.info(f"📝 Tracking Trade: {trade_id}")
+
+    async def _send_complex_proposal(self, symbol, strategy, side, legs, indicators, bias):
+        """Send a pre-constructed multi-leg proposal"""
+        
+        # Calculate Price (Net Credit/Debit from all legs)
+        # 1. Get Symbols
+        leg_symbols = [l['symbol'] for l in legs]
+        quotes = await self._get_quotes(leg_symbols)
+        
+        net_price = 0.0
+        for leg in legs:
+            price = quotes.get(leg['symbol'], 0.0)
+            if price == 0:
+                # Missing quote, skip this trade
+                logging.warning(f"⚠️ Missing quote for {leg['symbol']}, skipping complex proposal")
+                return
+            if leg['side'] == 'SELL':
+                net_price += price * leg['quantity']
+            else:
+                net_price -= price * leg['quantity']
+        
+        # If Opening: We prefer Credit (>0). If Debit (<0), ensure it's small.
+        # Ratio Spread might be small debit.
+        limit_price = abs(net_price)  # Gatekeeper expects positive limit price
+        
+        # Construct Context
+        context = {
+            'vix': indicators.get('vix', 0),
+            'flow_state': indicators.get('flow_state', 'UNKNOWN'),
+            'iv_rank': self.alpha_engine.get_iv_rank(symbol),
+            'strategy_logic': 'Complex Structure'
+        }
+
+        proposal = {
+            'symbol': symbol,
+            'strategy': strategy,
+            'side': side,
+            'quantity': 1,
+            'price': round(limit_price, 2),
+            'legs': legs,
+            'context': context
+        }
+        
+        response = await self.gatekeeper_client.send_proposal(proposal)
+        
+        if response and response.get('status') == 'APPROVED':
+            trade_id = f"{symbol}_{strategy}_{int(datetime.now().timestamp())}"
+            self.open_positions[trade_id] = {
+                'symbol': symbol,
+                'strategy': strategy,
+                'legs': legs,
+                'entry_price': round(limit_price, 2),
+                'bias': bias,
+                'timestamp': datetime.now(),
+                'highest_pnl': -100.0
+            }
+            logging.info(f"📝 Tracking Complex Trade: {trade_id}")
