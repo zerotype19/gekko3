@@ -134,7 +134,7 @@ for symbol, metrics in market_data.items():
             fig_rsi = go.Figure(go.Indicator(
                 mode = "gauge+number",
                 value = rsi,
-                title = {'text': "RSI Heatmap"},
+                title = {'text': f"{symbol} RSI Heatmap"},
                 gauge = {
                     'axis': {'range': [0, 100]},
                     'bar': {'color': "white"},
@@ -145,7 +145,7 @@ for symbol, metrics in market_data.items():
                 }
             ))
             fig_rsi.update_layout(height=200, margin=dict(l=20,r=20,t=30,b=20))
-            st.plotly_chart(fig_rsi, use_container_width=True)
+            st.plotly_chart(fig_rsi, use_container_width=True, key=f"rsi_gauge_{symbol}")
 
         with g2:
             # IV Rank Bar
