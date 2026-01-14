@@ -37,28 +37,52 @@ def get_account_id():
     """Fetch the Paper Trading Account ID (starts with VA)"""
     headers = {'Authorization': f'Bearer {ACCESS_TOKEN}', 'Accept': 'application/json'}
     try:
+        print(f"📡 Fetching profile from: {API_BASE}/user/profile")
         r = requests.get(f"{API_BASE}/user/profile", headers=headers)
-        if r.status_code == 200:
-            data = r.json()
-            # Handle list or single account
-            acct = data['profile']['account']
-            accounts = acct if isinstance(acct, list) else [acct]
+        if r.status_code != 200:
+            print(f"❌ Error fetching profile: {r.status_code}")
+            print(f"   Response: {r.text}")
+            return None
             
-            # Look for paper trading account (starts with VA)
-            for account in accounts:
-                account_num = account.get('account_number', '')
-                if account_num.startswith('VA'):
-                    print(f"✅ Found Paper Trading Account: {account_num}")
-                    return account_num
+        data = r.json()
+        print(f"🔍 Profile response keys: {list(data.keys())}")
+        
+        # Handle list or single account
+        profile = data.get('profile', {})
+        if not profile:
+            print(f"❌ No 'profile' in response. Full response: {json.dumps(data, indent=2)}")
+            return None
             
-            # Fallback: if no VA account found, use first account but warn
-            if accounts:
-                account_num = accounts[0].get('account_number', '')
-                print(f"⚠️ WARNING: No VA account found. Using first account: {account_num}")
-                print(f"   Available accounts: {[a.get('account_number', '') for a in accounts]}")
+        acct = profile.get('account', {})
+        if not acct:
+            print(f"❌ No 'account' in profile. Profile: {json.dumps(profile, indent=2)}")
+            return None
+            
+        accounts = acct if isinstance(acct, list) else [acct]
+        
+        print(f"🔍 Found {len(accounts)} account(s)")
+        
+        # Look for paper trading account (starts with VA)
+        for account in accounts:
+            account_num = account.get('account_number', '')
+            print(f"   - Account: {account_num}")
+            if account_num.startswith('VA'):
+                print(f"✅ Found Paper Trading Account: {account_num}")
                 return account_num
+        
+        # Fallback: if no VA account found, use first account but warn
+        if accounts:
+            account_num = accounts[0].get('account_number', '')
+            print(f"⚠️ WARNING: No VA account found. Using first account: {account_num}")
+            print(f"   Available accounts: {[a.get('account_number', '') for a in accounts]}")
+            print(f"   Make sure you're using SANDBOX token and SANDBOX API.")
+            return account_num
+        else:
+            print("❌ No accounts found in profile response")
     except Exception as e:
         logging.error(f"Failed to get account: {e}")
+        import traceback
+        traceback.print_exc()
     return None
 
 def get_positions(account_id):
