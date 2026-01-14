@@ -239,12 +239,21 @@ class MarketFeed:
             logging.error(f"Check order status failed: {e}")
         return None
 
-    async def _cancel_order(self, order_id: str):
-        """Cancel a pending order (uses SANDBOX API where orders are executed)"""
+    async def _cancel_order(self, order_id: str) -> bool:
+        """
+        Cancel a pending order (uses SANDBOX API where orders are executed)
+        Returns True if cancellation succeeded or order already filled/cancelled, False on error
+        """
         if not self.account_id: 
             await self._fetch_account_id()
         if not self.account_id: 
-            return
+            return False
+
+        # First, check order status - don't cancel if already filled/cancelled
+        status = await self._get_order_status(order_id)
+        if status in ['filled', 'canceled', 'rejected', 'expired']:
+            logging.info(f"ℹ️ Order {order_id} already {status}, skipping cancellation")
+            return True  # Not an error - order is already in terminal state
 
         # Use SANDBOX API for order cancellation (Gatekeeper executes orders in sandbox)
         sandbox_api_base = "https://sandbox.tradier.com/v1"
@@ -255,11 +264,26 @@ class MarketFeed:
             async with aiohttp.ClientSession() as session:
                 async with session.delete(url, headers=headers) as resp:
                     if resp.status == 200:
-                        logging.info(f"🗑️ Cancelled order {order_id}")
+                        data = await resp.json()
+                        order_status = data.get('order', {}).get('status', 'unknown')
+                        logging.info(f"🗑️ Cancelled order {order_id} (status: {order_status})")
+                        return True
                     else:
-                        logging.warning(f"Failed to cancel order {order_id}: {resp.status}")
+                        # Parse error response for better error details
+                        error_text = await resp.text()
+                        try:
+                            error_json = await resp.json()
+                            error_msg = error_json.get('error', error_json.get('fault', {}).get('faultstring', error_text))
+                            if isinstance(error_msg, dict):
+                                error_msg = error_msg.get('message', str(error_msg))
+                        except:
+                            error_msg = error_text[:200] if error_text else f"HTTP {resp.status}"
+                        
+                        logging.warning(f"⚠️ Failed to cancel order {order_id}: {resp.status} - {error_msg}")
+                        return False
         except Exception as e:
-            logging.error(f"Cancel order error: {e}")
+            logging.error(f"❌ Cancel order error for {order_id}: {e}")
+            return False
 
     # --- POSITION MANAGEMENT (AUTOPILOT) ---
     
@@ -407,12 +431,56 @@ class MarketFeed:
                         if (now - sent_time).total_seconds() > 120:
                             if not pos.get('cancelling'):  # Only cancel once
                                 logging.info(f"⏳ Order {order_id} pending too long. Cancelling to repost.")
-                                await self._cancel_order(order_id)
-                                # Mark as cancelling and wait for cancellation to complete
-                                pos['cancelling'] = True
-                                self._save_positions_to_disk()
-                                # Wait a moment for cancellation to process
-                                await asyncio.sleep(2)
+                                cancel_success = await self._cancel_order(order_id)
+                                if cancel_success:
+                                    # Mark as cancelling and wait for cancellation to complete
+                                    pos['cancelling'] = True
+                                    pos['cancel_attempt_time'] = now.isoformat()
+                                    self._save_positions_to_disk()
+                                    # Wait longer for cancellation to process (give Tradier time)
+                                    await asyncio.sleep(5)
+                                else:
+                                    # Cancellation failed - might be API error or order already filled
+                                    # Check status one more time before giving up
+                                    await asyncio.sleep(3)
+                                    final_status = await self._get_order_status(order_id)
+                                    if final_status in ['filled', 'canceled']:
+                                        logging.info(f"✅ Order {order_id} is now {final_status} after failed cancel attempt")
+                                        if final_status == 'filled':
+                                            del self.open_positions[trade_id]
+                                            self._save_positions_to_disk()
+                                        else:
+                                            pos['status'] = 'OPEN'
+                                            del pos['close_order_id']
+                                            pos['last_close_attempt'] = now
+                                            self._save_positions_to_disk()
+                                    else:
+                                        # Still pending - wait before retrying cancellation
+                                        logging.info(f"⏳ Order {order_id} still {final_status}, will retry cancellation later")
+                                        pos['cancel_attempt_time'] = now.isoformat()
+                                        self._save_positions_to_disk()
+                                        await asyncio.sleep(10)  # Extended delay before next attempt
+                                else:
+                                    # Cancellation failed - might be API error or order already filled
+                                    # Check status one more time before giving up
+                                    await asyncio.sleep(3)
+                                    final_status = await self._get_order_status(order_id)
+                                    if final_status in ['filled', 'canceled']:
+                                        logging.info(f"✅ Order {order_id} is now {final_status} after failed cancel attempt")
+                                        if final_status == 'filled':
+                                            del self.open_positions[trade_id]
+                                            self._save_positions_to_disk()
+                                        else:
+                                            pos['status'] = 'OPEN'
+                                            del pos['close_order_id']
+                                            pos['last_close_attempt'] = now
+                                            self._save_positions_to_disk()
+                                    else:
+                                        # Still pending - wait before retrying cancellation
+                                        logging.info(f"⏳ Order {order_id} still {final_status}, will retry cancellation later")
+                                        pos['cancel_attempt_time'] = now.isoformat()
+                                        self._save_positions_to_disk()
+                                        await asyncio.sleep(10)  # Extended delay before next attempt
                     continue
                 
                 else:
