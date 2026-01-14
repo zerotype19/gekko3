@@ -73,31 +73,57 @@ class MarketFeed:
         self.open_positions: Dict[str, Dict] = {}
         self.position_manager_task: Optional[asyncio.Task] = None
         
+        # Portfolio Greeks (Phase C: Dashboard)
+        self.portfolio_greeks = {'delta': 0.0, 'theta': 0.0, 'vega': 0.0}
+        
         # Dashboard state export
         self.state_file = 'brain_state.json'
     
     def export_state(self):
-        """Dumps current brain state to JSON for the dashboard"""
-        state = {}
+        """Dumps RICH brain state to JSON for the dashboard (Phase C: Step 3)"""
+        
+        # 1. Global State
+        regime = 'UNKNOWN'
+        try: 
+            regime = self.regime_engine.get_regime('SPY').value
+        except: 
+            pass
+
+        system_state = {
+            'timestamp': datetime.now().isoformat(),
+            'regime': regime,
+            'portfolio_risk': self.portfolio_greeks,
+            'open_positions': len(self.open_positions),
+            'status': 'CONNECTED' if self.is_connected else 'DISCONNECTED'
+        }
+
+        # 2. Symbol State
+        symbols_data = {}
         for symbol in self.symbols:
             inds = self.alpha_engine.get_indicators(symbol)
-            state[symbol] = {
+            iv_rank = self.alpha_engine.get_iv_rank(symbol)
+            
+            symbols_data[symbol] = {
                 'price': inds.get('price', 0),
                 'rsi': inds.get('rsi', 50),
                 'adx': self.alpha_engine.get_adx(symbol),
+                'iv_rank': iv_rank,  # NEW
                 'trend': inds.get('trend', 'UNKNOWN'),
                 'flow': inds.get('flow_state', 'NEUTRAL'),
                 'vix': inds.get('vix', 0),
                 'volume_velocity': inds.get('volume_velocity', 1.0),
-                'candle_count': inds.get('candle_count', 0),
-                'is_warm': inds.get('is_warm', False),
-                'timestamp': datetime.now().isoformat()
+                'active_signal': self.last_signals.get(symbol, {}).get('signal', None)
             }
         
-        # Save to a file in the brain directory
+        final_export = {
+            'system': system_state,
+            'market': symbols_data
+        }
+        
+        # Save to file
         try:
             with open(self.state_file, 'w') as f:
-                json.dump(state, f, indent=2)
+                json.dump(final_export, f, indent=2)
         except Exception as e:
             logging.error(f"Failed to export state: {e}")
 
@@ -339,7 +365,7 @@ class MarketFeed:
         self._log_portfolio_risk()
 
     def _log_portfolio_risk(self):
-        """Log total portfolio exposure (The 'Risk Dashboard')"""
+        """Log AND STORE total portfolio exposure (The 'Risk Dashboard')"""
         total_delta = 0.0
         total_theta = 0.0
         total_vega = 0.0
@@ -351,6 +377,13 @@ class MarketFeed:
             total_theta += greeks.get('theta', 0)
             total_vega += greeks.get('vega', 0)
             count += 1
+        
+        # STORE IT (Phase C: Dashboard)
+        self.portfolio_greeks = {
+            'delta': total_delta,
+            'theta': total_theta,
+            'vega': total_vega
+        }
             
         if count > 0:
             logging.info(f"📊 PORTFOLIO RISK: Delta {total_delta:+.1f} | Theta {total_theta:+.1f} | Vega {total_vega:+.1f} | Positions: {count}")

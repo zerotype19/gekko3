@@ -46,6 +46,7 @@ export class GatekeeperDO {
   private equityCache: { value: number; timestamp: number } | null = null;
   private EQUITY_CACHE_TTL_MS = 60000; // Cache equity for 1 minute
   private lastHeartbeat: number = 0; // Timestamp of last heartbeat from Brain
+  private restrictedDates: Set<string> = new Set(); // Phase C: Event Calendar Lock
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -71,6 +72,10 @@ export class GatekeeperDO {
         .first<{ status: 'NORMAL' | 'LOCKED' }>();
 
       this.systemLocked = statusResult?.status === 'LOCKED';
+
+      // Load restricted dates (Phase C: Event Calendar)
+      const dates = await this.state.storage.get<string[]>('restrictedDates');
+      this.restrictedDates = new Set(dates || []);
 
       // Load start of day equity (from most recent account snapshot before market open)
       // For now, we'll fetch current equity and use it as baseline on first run
@@ -172,6 +177,14 @@ export class GatekeeperDO {
       delete stored[tradeId];
       await this.state.storage.put(metadataKey, stored);
     }
+  }
+
+  /**
+   * Update restricted trading dates (Phase C: Event Calendar)
+   */
+  async updateCalendar(dates: string[]): Promise<void> {
+    this.restrictedDates = new Set(dates);
+    await this.state.storage.put('restrictedDates', dates);
   }
 
   /**
@@ -424,6 +437,17 @@ export class GatekeeperDO {
       };
     }
 
+    // 3.5. Event Calendar Check (Phase C, Step 3)
+    if (proposal.side === 'OPEN') {
+      const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+      if (this.restrictedDates.has(today)) {
+        return {
+          status: 'REJECTED',
+          rejectionReason: `Trading suspended for Event Risk (Calendar Lock): ${today}`,
+          evaluatedAt,
+        };
+      }
+    }
 
     // 5. Risk Checks
     const dailyLossPercent = await this.getDailyLossPercent();
@@ -1044,6 +1068,21 @@ export class GatekeeperDO {
 
     if (path === '/unlock' && request.method === 'POST') {
       return this.unlockSystemEndpoint(request);
+    }
+
+    if (path === '/admin/calendar' && request.method === 'POST') {
+      try {
+        const body = await request.json() as { dates: string[] };
+        await this.updateCalendar(body.dates);
+        return new Response(JSON.stringify({ status: 'UPDATED', count: body.dates.length }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: 'Invalid JSON' }), { 
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
     }
 
     if (path === '/liquidate' && request.method === 'POST') {
