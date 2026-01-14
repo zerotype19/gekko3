@@ -702,22 +702,9 @@ class MarketFeed:
             'symbol': pos['symbol'],
             'strategy': pos['strategy'],
             'side': 'CLOSE',
-            'quantity': 1,
-            'price': round(execution_price, 2),
-            'legs': legs,  # Use legs with actual Tradier quantities
-            'context': {
-                'reason': 'Manage Position',
-                'closing_trade_id': trade_id
-            }
-        }
-        
-        proposal = {
-            'symbol': pos['symbol'],
-            'strategy': pos['strategy'],
-            'side': 'CLOSE',
             'quantity': 1,  # Top-level quantity (usually 1 for spreads)
             'price': round(execution_price, 2),
-            'legs': legs,  # Use cleaned legs with absolute quantities
+            'legs': legs,  # Use legs with actual Tradier quantities
             'context': {
                 'reason': 'Manage Position',
                 'closing_trade_id': trade_id
