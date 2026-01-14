@@ -52,11 +52,45 @@ if not os.path.exists(state_file):
     st.rerun()
 
 try:
-    with open(state_file, 'r') as f:
-        raw_data = json.load(f)
+    # Read file with retry logic to handle race conditions
+    raw_data = None
+    for attempt in range(3):
+        try:
+            with open(state_file, 'r') as f:
+                content = f.read().strip()
+                if not content:
+                    # File is empty, wait and retry
+                    time.sleep(0.1)
+                    continue
+                raw_data = json.loads(content)
+                break
+        except json.JSONDecodeError as e:
+            if attempt < 2:
+                # Wait a bit and retry (file might be mid-write)
+                time.sleep(0.1)
+                continue
+            else:
+                raise
+    
+    if raw_data is None:
+        st.warning("⚠️ State file is empty. Waiting for Brain to write data...")
+        time.sleep(2)
+        st.rerun()
+        
+except FileNotFoundError:
+    st.warning("⚠️ Waiting for Brain heartbeat...")
+    time.sleep(2)
+    st.rerun()
+except json.JSONDecodeError as e:
+    st.error(f"⚠️ Invalid JSON in state file: {e}")
+    st.info("The Brain might be writing the file. Retrying...")
+    time.sleep(2)
+    st.rerun()
 except Exception as e:
-    st.error(f"Error reading state: {e}")
-    st.stop()
+    st.error(f"⚠️ Error reading state: {e}")
+    st.info("Retrying in 2 seconds...")
+    time.sleep(2)
+    st.rerun()
 
 # Handle New "Rich" Structure vs Old "Flat" Structure
 if 'system' in raw_data and 'market' in raw_data:
