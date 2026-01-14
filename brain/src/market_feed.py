@@ -3,6 +3,7 @@ Market Feed (Production Grade)
 Connects to Tradier WebSocket and feeds data to AlphaEngine
 Generates trading signals based on technical indicators
 Includes: Real-Time Pricing + Dynamic Expiration + Delta Strike Selection
+Includes: Order Verification & Retry Logic
 """
 
 import asyncio
@@ -53,6 +54,8 @@ class MarketFeed:
         if not self.access_token:
             raise ValueError('TRADIER_ACCESS_TOKEN must be set in .env')
         
+        self.account_id = None  # Fetched on connect
+        
         self.ws: Optional[websockets.WebSocketClientProtocol] = None
         self.connected = False
         self.is_connected = False
@@ -73,61 +76,60 @@ class MarketFeed:
         self.open_positions: Dict[str, Dict] = {}
         self.position_manager_task: Optional[asyncio.Task] = None
         
-        # Portfolio Greeks (Phase C: Dashboard)
+        # Portfolio Greeks
         self.portfolio_greeks = {'delta': 0.0, 'theta': 0.0, 'vega': 0.0}
         
-        # Dashboard state export (write to project root for Streamlit dashboard)
-        # The dashboard runs from project root, so we need to write there
-        # If running from brain/ directory, go up one level; otherwise use current dir
+        # Dashboard state export
         current_dir = os.getcwd()
         if current_dir.endswith('brain'):
-            # Running from brain/ directory, write to parent (project root)
             self.state_file = os.path.join(os.path.dirname(current_dir), 'brain_state.json')
             self.positions_file = os.path.join(os.path.dirname(current_dir), 'brain_positions.json')
         else:
-            # Running from project root
             self.state_file = 'brain_state.json'
             self.positions_file = 'brain_positions.json'
         
         # Load positions from disk on startup (survive restarts)
         self._load_positions_from_disk()
-    
+
+    # --- PERSISTENCE ---
     def _save_positions_to_disk(self):
         """Persist open positions to disk to survive restarts"""
         try:
             with open(self.positions_file, 'w') as f:
-                # Convert datetime objects to strings for JSON
                 serializable = {}
                 for k, v in self.open_positions.items():
                     serializable[k] = v.copy()
-                    # Convert datetime to ISO string
-                    if 'timestamp' in serializable[k] and isinstance(serializable[k]['timestamp'], datetime):
-                        serializable[k]['timestamp'] = serializable[k]['timestamp'].isoformat()
+                    if isinstance(v.get('timestamp'), datetime):
+                        serializable[k]['timestamp'] = v['timestamp'].isoformat()
+                    # Also save closing metadata
+                    if isinstance(v.get('closing_timestamp'), datetime):
+                        serializable[k]['closing_timestamp'] = v['closing_timestamp'].isoformat()
                 json.dump(serializable, f, indent=2)
-                logging.debug(f"💾 Saved {len(self.open_positions)} positions to disk")
         except Exception as e:
-            logging.error(f"⚠️ Failed to save positions: {e}")
+            logging.error(f"Failed to save positions: {e}")
 
     def _load_positions_from_disk(self):
         """Load positions from disk on startup"""
         if not os.path.exists(self.positions_file):
             return
+        
         try:
             with open(self.positions_file, 'r') as f:
                 data = json.load(f)
                 for k, v in data.items():
                     # Restore datetime objects
-                    if 'timestamp' in v and isinstance(v['timestamp'], str):
+                    if 'timestamp' in v:
                         v['timestamp'] = datetime.fromisoformat(v['timestamp'])
+                    if 'closing_timestamp' in v:
+                        v['closing_timestamp'] = datetime.fromisoformat(v['closing_timestamp'])
                     self.open_positions[k] = v
-            if self.open_positions:
-                logging.info(f"♻️ Restored {len(self.open_positions)} positions from disk")
+                if self.open_positions:
+                    logging.info(f"♻️ Restored {len(self.open_positions)} positions from disk.")
         except Exception as e:
-            logging.error(f"⚠️ Failed to load positions: {e}")
+            logging.error(f"Failed to load positions: {e}")
 
     def export_state(self):
-        """Dumps RICH brain state to JSON for the dashboard (Phase C: Step 3)"""
-        
+        """Dumps RICH brain state to JSON for the dashboard"""
         # 1. Global State
         regime = 'UNKNOWN'
         try: 
@@ -153,7 +155,7 @@ class MarketFeed:
                 'price': inds.get('price', 0),
                 'rsi': inds.get('rsi', 50),
                 'adx': self.alpha_engine.get_adx(symbol),
-                'iv_rank': iv_rank,  # NEW
+                'iv_rank': iv_rank,
                 'trend': inds.get('trend', 'UNKNOWN'),
                 'flow': inds.get('flow_state', 'NEUTRAL'),
                 'vix': inds.get('vix', 0),
@@ -166,15 +168,77 @@ class MarketFeed:
             'market': symbols_data
         }
         
-        # Save to file
         try:
             with open(self.state_file, 'w') as f:
                 json.dump(final_export, f, indent=2)
         except Exception as e:
             logging.error(f"Failed to export state: {e}")
         
-        # Return the data (for heartbeat payload)
         return final_export
+
+    # --- HELPERS FOR ORDER MANAGEMENT ---
+    async def _fetch_account_id(self):
+        """Fetches the account ID if not already known"""
+        if self.account_id: 
+            return self.account_id
+        
+        headers = {'Authorization': f'Bearer {self.access_token}', 'Accept': 'application/json'}
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{TRADIER_API_BASE}/user/profile", headers=headers) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        acct = data['profile']['account']
+                        if isinstance(acct, list):
+                            self.account_id = acct[0]['account_number']
+                        else:
+                            self.account_id = acct['account_number']
+                        logging.info(f"✅ Account ID identified: {self.account_id}")
+                        return self.account_id
+        except Exception as e:
+            logging.error(f"Failed to fetch account ID: {e}")
+        return None
+
+    async def _get_order_status(self, order_id: str) -> Optional[str]:
+        """Check status of a specific order"""
+        if not self.account_id: 
+            await self._fetch_account_id()
+        if not self.account_id: 
+            return None
+
+        headers = {'Authorization': f'Bearer {self.access_token}', 'Accept': 'application/json'}
+        url = f"{TRADIER_API_BASE}/accounts/{self.account_id}/orders/{order_id}"
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        order = data.get('order', {})
+                        return order.get('status')  # 'filled', 'canceled', 'pending', 'rejected'
+        except Exception as e:
+            logging.error(f"Check order status failed: {e}")
+        return None
+
+    async def _cancel_order(self, order_id: str):
+        """Cancel a pending order"""
+        if not self.account_id: 
+            await self._fetch_account_id()
+        if not self.account_id: 
+            return
+
+        headers = {'Authorization': f'Bearer {self.access_token}', 'Accept': 'application/json'}
+        url = f"{TRADIER_API_BASE}/accounts/{self.account_id}/orders/{order_id}"
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.delete(url, headers=headers) as resp:
+                    if resp.status == 200:
+                        logging.info(f"🗑️ Cancelled order {order_id}")
+                    else:
+                        logging.warning(f"Failed to cancel order {order_id}: {resp.status}")
+        except Exception as e:
+            logging.error(f"Cancel order error: {e}")
 
     # --- POSITION MANAGEMENT (AUTOPILOT) ---
     
@@ -182,65 +246,49 @@ class MarketFeed:
         """Background task to monitor and manage open positions"""
         logging.info("🛡️ Position Manager: ONLINE")
         last_status_log = datetime.now()
+        
+        # Ensure account ID is ready
+        await self._fetch_account_id()
+
         while not self.stop_signal:
             try:
                 if self.open_positions:
                     await self._manage_positions()
-                    # Log status every 30 seconds
                     if (datetime.now() - last_status_log).seconds >= 30:
                         logging.info(f"📊 MONITORING {len(self.open_positions)} open positions")
                         last_status_log = datetime.now()
                 else:
-                    # Check less frequently when no positions
                     await asyncio.sleep(30)
                     continue
             except Exception as e:
                 logging.error(f"⚠️ Manager Error: {e}")
                 import traceback
                 traceback.print_exc()
-            await asyncio.sleep(5)  # Check every 5 seconds
+            await asyncio.sleep(5)
 
     async def _get_quotes(self, symbols: List[str]) -> Dict[str, Dict]:
-        """
-        Fetch real-time quotes AND Greeks for option symbols.
-        Returns Dict: {symbol: {'price': float, 'delta': float, 'theta': float, 'vega': float}}
-        """
-        if not symbols:
+        if not symbols: 
             return {}
-        
         headers = {'Authorization': f'Bearer {self.access_token}', 'Accept': 'application/json'}
         url = f'{TRADIER_API_BASE}/markets/quotes'
-        # Request Greeks explicitly
         params = {'symbols': ','.join(symbols), 'greeks': 'true'}
-        
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=headers, params=params) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         quotes = data.get('quotes', {}).get('quote', [])
-                        if isinstance(quotes, dict):
+                        if isinstance(quotes, dict): 
                             quotes = [quotes]
-                        
                         result = {}
                         for q in quotes:
                             sym = q.get('symbol')
-                            if not sym:
+                            if not sym: 
                                 continue
-                            
-                            # Price Logic (Mid or Last)
                             bid = float(q.get('bid', 0) or 0)
                             ask = float(q.get('ask', 0) or 0)
-                            if bid > 0 and ask > 0:
-                                price = (bid + ask) / 2
-                            else:
-                                price = float(q.get('last', 0) or 0)
-                                
-                            # Greeks Logic (Safely parse)
-                            greeks = q.get('greeks', {})
-                            if greeks is None:
-                                greeks = {}
-                            
+                            price = (bid + ask) / 2 if bid > 0 and ask > 0 else float(q.get('last', 0) or 0)
+                            greeks = q.get('greeks', {}) or {}
                             result[sym] = {
                                 'price': price,
                                 'delta': float(greeks.get('delta', 0) or 0),
@@ -254,191 +302,178 @@ class MarketFeed:
 
     async def _manage_positions(self):
         """
-        Smart Manager 2.0: Advanced Exit Logic
-        Includes: Trailing Stops, Technical Guards (SMA/ADX), and Hard Stops.
+        Smart Manager 2.0: Advanced Exit Logic + Order Verification
         """
-        # 1. Collect all option symbols we need to check
         all_legs = []
         for pos in self.open_positions.values():
             for leg in pos['legs']:
                 all_legs.append(leg['symbol'])
         
-        if not all_legs:
+        if not all_legs: 
             return
-        
-        # 2. Batch fetch prices
         quotes = await self._get_quotes(all_legs)
         if not quotes:
-            logging.warning(f"⚠️ Failed to fetch quotes for {len(all_legs)} option symbols. Positions: {len(self.open_positions)}")
+            logging.warning(f"⚠️ Failed to fetch quotes for {len(all_legs)} option symbols.")
             return
 
-        # 3. Check Rules
         now = datetime.now()
+        
+        # Iterate over a COPY of items because we might modify dictionary
         for trade_id, pos in list(self.open_positions.items()):
-            symbol = pos['symbol']
             
-            # --- P&L CALCULATION (Updated for Greeks) ---
+            # --- 1. CHECK CLOSING ORDERS FIRST ---
+            if pos.get('status') == 'CLOSING':
+                order_id = pos.get('close_order_id')
+                if not order_id:
+                    # Weird state, reset to OPEN
+                    pos['status'] = 'OPEN'
+                    continue
+                
+                status = await self._get_order_status(order_id)
+                
+                if status == 'filled':
+                    logging.info(f"✅ ORDER FILLED for {trade_id}. Position Closed.")
+                    del self.open_positions[trade_id]
+                    self._save_positions_to_disk()
+                    continue
+                
+                elif status in ['canceled', 'rejected', 'expired']:
+                    logging.warning(f"⚠️ Closing Order {status} for {trade_id}. Retrying...")
+                    pos['status'] = 'OPEN'  # Reset to try again
+                    del pos['close_order_id']
+                    if 'closing_timestamp' in pos:
+                        del pos['closing_timestamp']
+                    self._save_positions_to_disk()
+                    continue
+                
+                elif status == 'pending' or status == 'open' or status == 'partially_filled':
+                    # Check timeout
+                    sent_time = pos.get('closing_timestamp')
+                    if sent_time:
+                        # If pending for > 2 minutes, cancel and retry (likely price moved)
+                        if (now - sent_time).total_seconds() > 120:
+                            logging.info(f"⏳ Order {order_id} pending too long. Cancelling to repost.")
+                            await self._cancel_order(order_id)
+                            # Next loop will see 'canceled' and reset to OPEN
+                    continue
+                
+                else:
+                    # Unknown status or API fail, wait for next loop
+                    continue
+
+            # --- 2. EVALUATE OPEN POSITIONS ---
+            symbol = pos['symbol']
             cost_to_close = 0.0
             missing_quote = False
-            
-            # Track Trade-Level Greeks
             trade_delta = 0.0
             trade_theta = 0.0
             trade_vega = 0.0
             
             for leg in pos['legs']:
-                quote_data = quotes.get(leg['symbol'])  # Now a dict
+                quote_data = quotes.get(leg['symbol'])
                 if not quote_data:
                     missing_quote = True
                     break
-                
                 price = quote_data['price']
                 qty = float(leg['quantity'])
-                
-                # To Close: Buy Short (+), Sell Long (-)
                 if leg['side'] == 'SELL':
                     cost_to_close += price * qty
-                    # Short Option Greeks: Invert sign
-                    trade_delta -= quote_data['delta'] * 100 * qty  # 1 contract = 100 shares
+                    trade_delta -= quote_data['delta'] * 100 * qty
                     trade_theta -= quote_data['theta'] * 100 * qty
                     trade_vega -= quote_data['vega'] * 100 * qty
                 else:
                     cost_to_close -= price * qty
-                    # Long Option Greeks: Keep sign
                     trade_delta += quote_data['delta'] * 100 * qty
                     trade_theta += quote_data['theta'] * 100 * qty
                     trade_vega += quote_data['vega'] * 100 * qty
             
-            # Store live greeks in position for debugging
             pos['live_greeks'] = {'delta': trade_delta, 'theta': trade_theta, 'vega': trade_vega}
             
-            if missing_quote:
-                logging.warning(f"⚠️ Missing quotes for {trade_id} ({symbol}). Skipping this cycle.")
+            if missing_quote: 
                 continue
-            if cost_to_close <= 0:
-                logging.warning(f"⚠️ Invalid cost_to_close ({cost_to_close}) for {trade_id}. Skipping.")
+            if cost_to_close <= 0: 
                 continue
             
             entry_credit = pos['entry_price']
-            # ROI: (Entry - Current) / Entry. Example: Sold @ 1.00, Buy @ 0.50 = 50% Profit
             pnl_pct = ((entry_credit - cost_to_close) / entry_credit) * 100
             
-            # Update High Water Mark (Trailing Stop Base)
             if pnl_pct > pos.get('highest_pnl', -100):
                 pos['highest_pnl'] = pnl_pct
 
-            # --- EXIT REASONING ---
+            # --- EXIT RULES ---
             should_close = False
             reason = ""
             
-            # Get latest technicals for context
             indicators = self.alpha_engine.get_indicators(symbol)
             current_price = indicators['price']
             sma_200 = indicators.get('sma_200')
             adx = self.alpha_engine.get_adx(symbol)
 
-            # Detect Strategy Type
             is_scalper = False
             if pos['legs']:
                 try:
                     exp_str = pos['legs'][0].get('expiration', '')
                     exp = datetime.strptime(exp_str, '%Y-%m-%d').date()
-                    if (exp - now.date()).days == 0:
+                    if (exp - now.date()).days == 0: 
                         is_scalper = True
-                except:
+                except: 
                     pass
 
-            # ----------------------------------------
-            # STRATEGY 1: SCALPER (0DTE)
-            # ----------------------------------------
             if is_scalper:
                 rsi = indicators['rsi']
-                # Rule A: Mean Reversion (Classic)
                 if rsi is not None:
-                    if pos.get('bias') == 'bullish' and rsi > 60:  # Let it run a bit more than 50
+                    if pos.get('bias') == 'bullish' and rsi > 60:
                         should_close = True
                         reason = f"Scalp Win (RSI {rsi:.1f})"
                     elif pos.get('bias') == 'bearish' and rsi < 40:
                         should_close = True
                         reason = f"Scalp Win (RSI {rsi:.1f})"
-                
-                # Rule B: Hard Stop
-                if pnl_pct < -20:
+                if pnl_pct < -20: 
                     should_close = True
                     reason = "Scalp Hard Stop (-20%)"
 
-            # ----------------------------------------
-            # STRATEGY 2: TREND & ORB (Directional)
-            # ----------------------------------------
             elif pos['strategy'] == 'CREDIT_SPREAD' and pos.get('bias') in ['bullish', 'bearish']:
-                # Rule A: Trailing Stop (The "Let Winners Run" Rule)
-                # If we hit 30% profit, trigger trail. Close if we drop 10% from peak.
                 if pos['highest_pnl'] >= 30 and (pos['highest_pnl'] - pnl_pct) >= 10:
                     should_close = True
                     reason = f"Trailing Stop (Peak {pos['highest_pnl']:.1f}%)"
-                
-                # Rule B: Technical Fail (Trend Reversal)
-                # Bullish trade but Price crashes below SMA 200? Get out.
                 if pos.get('bias') == 'bullish' and sma_200 and current_price < sma_200:
                     should_close = True
                     reason = "Trend Broken (Price < SMA200)"
-                # Bearish trade but Price rallies above SMA 200? Get out.
                 if pos.get('bias') == 'bearish' and sma_200 and current_price > sma_200:
                     should_close = True
                     reason = "Trend Broken (Price > SMA200)"
-
-                # Rule C: Hard Target/Stop (Safety Net)
-                if pnl_pct >= 80:
+                if pnl_pct >= 80: 
                     should_close = True
                     reason = "Max Profit (+80%)"
-                if pnl_pct <= -100:
+                if pnl_pct <= -100: 
                     should_close = True
                     reason = "Stop Loss (-100%)"
 
-            # ----------------------------------------
-            # STRATEGY 3: RANGE FARMER (Neutral)
-            # ----------------------------------------
             elif pos.get('bias') == 'neutral':
-                # Rule A: Volatility Spike (ADX)
-                # If ADX goes above 30, the market is trending. Condors will die. Exit.
-                if adx is not None and adx > 30:
+                if adx is not None and adx > 30: 
                     should_close = True
                     reason = f"Volatility Spike (ADX {adx:.1f})"
-                
-                # Rule B: Standard Profit/Loss
-                if pnl_pct >= 50:
+                if pnl_pct >= 50: 
                     should_close = True
                     reason = "Take Profit (+50%)"
-                if pnl_pct <= -100:
+                if pnl_pct <= -100: 
                     should_close = True
                     reason = "Stop Loss (-100%)"
 
-            # ----------------------------------------
-            # GLOBAL RULES
-            # ----------------------------------------
-            # EOD Force Close (3:55 PM)
             if now.hour == 15 and now.minute >= 55:
                 should_close = True
                 reason = "EOD Auto-Close"
 
-            # EXECUTE
             if should_close:
-                logging.info(f"🛑 CLOSING {trade_id} | P&L: {pnl_pct:.1f}% | Reason: {reason}")
+                logging.info(f"🛑 ATTEMPTING CLOSE {trade_id} | P&L: {pnl_pct:.1f}% | Reason: {reason}")
                 await self._execute_close(trade_id, pos, cost_to_close)
         
-        # Log Portfolio Risk (after checking all positions)
         self._log_portfolio_risk()
-        
-        # Log position summary if we have positions
-        if self.open_positions:
-            logging.debug(f"📋 Position Summary: {len(self.open_positions)} positions being monitored")
 
     def _log_portfolio_risk(self):
-        """Log AND STORE total portfolio exposure (The 'Risk Dashboard')"""
         total_delta = 0.0
         total_theta = 0.0
         total_vega = 0.0
-        
         count = 0
         for pos in self.open_positions.values():
             greeks = pos.get('live_greeks', {})
@@ -446,21 +481,14 @@ class MarketFeed:
             total_theta += greeks.get('theta', 0)
             total_vega += greeks.get('vega', 0)
             count += 1
-        
-        # STORE IT (Phase C: Dashboard)
-        self.portfolio_greeks = {
-            'delta': total_delta,
-            'theta': total_theta,
-            'vega': total_vega
-        }
-            
+        self.portfolio_greeks = {'delta': total_delta, 'theta': total_theta, 'vega': total_vega}
         if count > 0:
-            logging.info(f"📊 PORTFOLIO RISK: Delta {total_delta:+.1f} | Theta {total_theta:+.1f} | Vega {total_vega:+.1f} | Positions: {count}")
+            logging.debug(f"📊 PORTFOLIO RISK: Delta {total_delta:+.1f} | Theta {total_theta:+.1f} | Vega {total_vega:+.1f}")
 
     async def _execute_close(self, trade_id: str, pos: Dict, limit_price: float):
-        """Send CLOSE order to Gatekeeper"""
-        # Construct Close Proposal (Gatekeeper handles leg inversion based on side='CLOSE')
-        # Add buffer to limit price to ensure fill (pay 5 cents more for debit)
+        """Send CLOSE order and track it"""
+        # Add Aggressive Buffer to Limit Price (Pay more to close)
+        # Standard: +0.05. New Aggressive: +0.10 if PnL is good, or keep 0.05
         execution_price = limit_price + 0.05
         
         proposal = {
@@ -469,7 +497,7 @@ class MarketFeed:
             'side': 'CLOSE',
             'quantity': 1,
             'price': round(execution_price, 2),
-            'legs': pos['legs'],  # Send same legs, Gatekeeper inverts logic based on 'CLOSE' side
+            'legs': pos['legs'],
             'context': {
                 'reason': 'Manage Position',
                 'closing_trade_id': trade_id
@@ -477,16 +505,23 @@ class MarketFeed:
         }
         
         resp = await self.gatekeeper_client.send_proposal(proposal)
+        
         if resp and resp.get('status') == 'APPROVED':
-            del self.open_positions[trade_id]
-            self._save_positions_to_disk()  # Persist removal
-            logging.info(f"✅ Closed {trade_id} | Remaining positions: {len(self.open_positions)}")
+            # NEW: DO NOT DELETE. Mark as CLOSING.
+            # Extract order_id from response (may be in 'data' or top-level)
+            order_id = resp.get('order_id') or (resp.get('data', {}).get('order_id') if isinstance(resp.get('data'), dict) else None)
+            if order_id:
+                pos['status'] = 'CLOSING'
+                pos['close_order_id'] = str(order_id)
+                pos['closing_timestamp'] = datetime.now()
+                self._save_positions_to_disk()
+                logging.info(f"📤 Close Order Sent: {order_id}. Waiting for fill...")
+            else:
+                logging.error(f"❌ Approved but no Order ID for {trade_id}. Response: {resp}")
         elif resp and resp.get('status') == 'REJECTED':
-            logging.error(f"❌ Close REJECTED for {trade_id}: {resp.get('reason', 'Unknown reason')}")
-            # Keep position in tracking for retry (will retry on next cycle)
+            logging.error(f"❌ Close REJECTED for {trade_id}: {resp.get('reason')}")
         else:
             logging.error(f"❌ Close FAILED for {trade_id}: {resp}")
-            # Keep position in tracking for retry
 
     # --- VIX Polling ---
     async def _poll_vix_loop(self):
@@ -504,14 +539,16 @@ class MarketFeed:
                             data = await resp.json()
                             quotes = data.get('quotes', {})
                             quote = quotes.get('quote', None)
-                            if isinstance(quote, list): quote = quote[0]
+                            if isinstance(quote, list): 
+                                quote = quote[0]
                             if quote and quote.get('last') is not None:
                                 self.alpha_engine.set_vix(float(quote['last']), datetime.now())
             except Exception as e:
                 logging.error(f"❌ VIX poller error: {e}")
             
             for _ in range(6): 
-                if self.stop_signal: break
+                if self.stop_signal: 
+                    break
                 await asyncio.sleep(10)
 
     # --- Connection Logic ---
@@ -567,7 +604,8 @@ class MarketFeed:
         logging.info(f"🚀 Monitoring: {', '.join(self.symbols)}")
         try:
             async for message in websocket:
-                if self.stop_signal: break
+                if self.stop_signal: 
+                    break
                 data = json.loads(message)
                 await self._handle_message(data)
         except Exception as e:
@@ -577,12 +615,14 @@ class MarketFeed:
     async def disconnect(self):
         self.stop_signal = True
         self.is_connected = False
-        if self.ws: await self.ws.close()
+        if self.ws: 
+            await self.ws.close()
 
     async def _handle_message(self, data: dict):
         if data.get('type') == 'trade':
             await self._handle_trade(data)
-            if data.get('symbol'): await self._check_signals(data.get('symbol'))
+            if data.get('symbol'): 
+                await self._check_signals(data.get('symbol'))
         elif data.get('type') == 'quote':
             await self._handle_quote(data)
 
@@ -603,7 +643,8 @@ class MarketFeed:
 
     # --- SIGNAL LOGIC ---
     async def _check_signals(self, symbol: str):
-        if not symbol or symbol not in self.symbols: return
+        if not symbol or symbol not in self.symbols: 
+            return
         
         now = datetime.now()
         if symbol in self.last_proposal_time:
@@ -657,7 +698,7 @@ class MarketFeed:
         # -----------------------------------------------
         if not signal and current_regime.value == 'LOW_VOL_CHOP' and current_hour == 13 and 0 <= current_minute < 5:
             adx = self.alpha_engine.get_adx(symbol)
-            if adx is not None and adx < 20: # Low Trend
+            if adx is not None and adx < 20:  # Low Trend
                 logging.info(f"🚜 FARMING: {symbol} ADX {adx:.1f}. Opening Iron Condor.")
                 # FIX: Use 'CREDIT_SPREAD' so Gatekeeper accepts the order
                 # Leg 1: Bear Call Spread
@@ -834,22 +875,27 @@ class MarketFeed:
                         exps = data.get('expirations', {}).get('date', [])
                         return exps if isinstance(exps, list) else [exps]
                     return []
-        except: return []
+        except: 
+            return []
 
     async def _get_best_expiration(self, symbol: str) -> Optional[str]:
         # Target: 30 DTE (Sweet Spot)
         exps = await self._get_expirations(symbol)
-        if not exps: return None
+        if not exps: 
+            return None
         
         today = datetime.now().date()
         valid = []
         for e in exps:
             try:
                 dte = (datetime.strptime(e, '%Y-%m-%d').date() - today).days
-                if 14 <= dte <= 45: valid.append((dte, e))
-            except: continue
+                if 14 <= dte <= 45: 
+                    valid.append((dte, e))
+            except: 
+                continue
             
-        if not valid: return None
+        if not valid: 
+            return None
         valid.sort(key=lambda x: abs(x[0] - 30))
         return valid[0][1]
 
@@ -871,7 +917,8 @@ class MarketFeed:
                         opts = data.get('options', {}).get('option', [])
                         return opts if isinstance(opts, list) else [opts]
                     return []
-        except: return []
+        except: 
+            return []
 
     async def _get_atm_iv(self, symbol: str) -> float:
         """Fetch At-The-Money Implied Volatility"""
@@ -1058,16 +1105,20 @@ class MarketFeed:
         else:
             exp_str = await self._get_best_expiration(symbol)
             
-        if not exp_str: return
+        if not exp_str: 
+            return
 
         # 2. Chain
         chain = await self._get_option_chain(symbol, exp_str)
-        if not chain: return
+        if not chain: 
+            return
 
         # Helper: Safely get delta
         def get_delta(o):
-            try: return float(o.get('greeks', {}).get('delta', 0))
-            except: return 0.0
+            try: 
+                return float(o.get('greeks', {}).get('delta', 0))
+            except: 
+                return 0.0
 
         current_price = indicators['price']
         
@@ -1095,15 +1146,17 @@ class MarketFeed:
                 # Fallback to 2% OTM
                 target_strike = current_price * 0.98
                 candidates = [o for o in candidates if float(o['strike']) <= target_strike]
-                if candidates: short_leg = candidates[-1]
+                if candidates: 
+                    short_leg = candidates[-1]
                 
             if short_leg:
                 # Long leg: $5 lower
                 s_strike = float(short_leg['strike'])
                 longs = [o for o in options if float(o['strike']) <= s_strike - 5]
-                if longs: long_leg = longs[-1]
+                if longs: 
+                    long_leg = longs[-1]
 
-        else: # CALL
+        else:  # CALL
             # Calls have positive delta
             # Find strikes above price
             candidates = [o for o in options if float(o['strike']) > current_price]
@@ -1115,30 +1168,37 @@ class MarketFeed:
                 # Fallback to 2% OTM
                 target_strike = current_price * 1.02
                 candidates = [o for o in candidates if float(o['strike']) >= target_strike]
-                if candidates: short_leg = candidates[0]
+                if candidates: 
+                    short_leg = candidates[0]
                 
             if short_leg:
                 # Long leg: $5 higher
                 s_strike = float(short_leg['strike'])
                 longs = [o for o in options if float(o['strike']) >= s_strike + 5]
-                if longs: long_leg = longs[0]
+                if longs: 
+                    long_leg = longs[0]
 
-        if not short_leg or not long_leg: return
+        if not short_leg or not long_leg: 
+            return
 
         # 4. Real Pricing
         short_bid = float(short_leg.get('bid', 0))
         long_ask = float(long_leg.get('ask', 0))
         
-        if short_bid == 0 or long_ask == 0: return # No liquidity
+        if short_bid == 0 or long_ask == 0: 
+            return  # No liquidity
 
         fair_credit = short_bid - long_ask
-        limit_price = max(0.05, fair_credit - 0.05) # 5 cent buffer
+        limit_price = max(0.05, fair_credit - 0.05)  # 5 cent buffer
 
         # 5. Real Metrics (No Stubs)
         vix = indicators.get('vix') or 0
-        if vix < 15: vol_state = 'low'
-        elif vix < 25: vol_state = 'normal'
-        else: vol_state = 'high'
+        if vix < 15: 
+            vol_state = 'low'
+        elif vix < 25: 
+            vol_state = 'normal'
+        else: 
+            vol_state = 'high'
         
         velocity = indicators.get('volume_velocity', 1.0)
         imbalance_score = min(10, max(0, (velocity - 1.0) * 5))
@@ -1176,7 +1236,7 @@ class MarketFeed:
                 'rsi': indicators['rsi'],
                 'vwap': indicators['vwap'],
                 'volume_velocity': velocity,
-                'imbalance_score': round(imbalance_score, 1), # REAL DATA
+                'imbalance_score': round(imbalance_score, 1),  # REAL DATA
             }
         }
         
@@ -1184,6 +1244,8 @@ class MarketFeed:
         
         # Track approved trades for position management
         if response and response.get('status') == 'APPROVED':
+            # Extract order_id from response (may be in 'data' or top-level)
+            order_id = response.get('order_id') or (response.get('data', {}).get('order_id') if isinstance(response.get('data'), dict) else None)
             trade_id = f"{symbol}_{strategy}_{int(datetime.now().timestamp())}"
             self.open_positions[trade_id] = {
                 'symbol': symbol,
@@ -1192,10 +1254,11 @@ class MarketFeed:
                 'entry_price': proposal['price'],
                 'bias': bias,
                 'timestamp': datetime.now(),
-                'highest_pnl': -100.0  # NEW: Initialize for Trailing Stop tracking
+                'highest_pnl': -100.0,  # NEW: Initialize for Trailing Stop tracking
+                'status': 'OPEN'  # Track status: OPEN, CLOSING
             }
-            logging.info(f"📝 Tracking Trade: {trade_id} | Total positions: {len(self.open_positions)}")
-            self._save_positions_to_disk()  # Persist new position
+            logging.info(f"📝 Tracking Trade: {trade_id} | Order ID: {order_id}")
+            self._save_positions_to_disk()
 
     async def _send_complex_proposal(self, symbol, strategy, side, legs, indicators, bias):
         """Send a pre-constructed multi-leg proposal"""
@@ -1243,6 +1306,8 @@ class MarketFeed:
         response = await self.gatekeeper_client.send_proposal(proposal)
         
         if response and response.get('status') == 'APPROVED':
+            # Extract order_id from response (may be in 'data' or top-level)
+            order_id = response.get('order_id') or (response.get('data', {}).get('order_id') if isinstance(response.get('data'), dict) else None)
             trade_id = f"{symbol}_{strategy}_{int(datetime.now().timestamp())}"
             self.open_positions[trade_id] = {
                 'symbol': symbol,
@@ -1251,7 +1316,8 @@ class MarketFeed:
                 'entry_price': round(limit_price, 2),
                 'bias': bias,
                 'timestamp': datetime.now(),
-                'highest_pnl': -100.0
+                'highest_pnl': -100.0,
+                'status': 'OPEN'  # Track status: OPEN, CLOSING
             }
-            logging.info(f"📝 Tracking Complex Trade: {trade_id} | Total positions: {len(self.open_positions)}")
-            self._save_positions_to_disk()  # Persist new position
+            logging.info(f"📝 Tracking Complex Trade: {trade_id} | Order ID: {order_id} | Total positions: {len(self.open_positions)}")
+            self._save_positions_to_disk()
