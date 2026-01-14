@@ -76,8 +76,17 @@ class MarketFeed:
         # Portfolio Greeks (Phase C: Dashboard)
         self.portfolio_greeks = {'delta': 0.0, 'theta': 0.0, 'vega': 0.0}
         
-        # Dashboard state export
-        self.state_file = 'brain_state.json'
+        # Dashboard state export (write to project root for Streamlit dashboard)
+        # The dashboard runs from project root, so we need to write there
+        # If running from brain/ directory, go up one level; otherwise use current dir
+        import os
+        current_dir = os.getcwd()
+        if current_dir.endswith('brain'):
+            # Running from brain/ directory, write to parent (project root)
+            self.state_file = os.path.join(os.path.dirname(current_dir), 'brain_state.json')
+        else:
+            # Running from project root
+            self.state_file = 'brain_state.json'
     
     def export_state(self):
         """Dumps RICH brain state to JSON for the dashboard (Phase C: Step 3)"""
