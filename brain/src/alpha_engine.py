@@ -6,8 +6,10 @@ Determines RISK_ON, RISK_OFF, or NEUTRAL flow states
 
 import pandas as pd
 import numpy as np
+import json
+import os
 from datetime import datetime, timedelta
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List
 from collections import defaultdict
 
 
@@ -56,6 +58,11 @@ class AlphaEngine:
             'last_bar_timestamp': None,
             'initialized': False
         })
+        
+        # IV tracking (for IV Rank calculation)
+        self.iv_history: Dict[str, List[float]] = {}  # Store IV data points
+        self.iv_file = 'brain_iv_history.json'
+        self._load_iv_history()
 
     def _get_session_start(self, current_time: datetime) -> datetime:
         """Get the session start time (market open: 9:30 AM ET)"""
@@ -516,3 +523,54 @@ class AlphaEngine:
             'is_warm': sma is not None and vix is not None  # Warmup status
         }
 
+    def _load_iv_history(self):
+        """Load historical IV data from disk"""
+        if os.path.exists(self.iv_file):
+            try:
+                with open(self.iv_file, 'r') as f:
+                    self.iv_history = json.load(f)
+            except:
+                pass
+
+    def _save_iv_history(self):
+        """Save IV data to disk"""
+        try:
+            with open(self.iv_file, 'w') as f:
+                json.dump(self.iv_history, f)
+        except:
+            pass
+
+    def update_iv(self, symbol: str, iv: float):
+        """Record a new IV data point"""
+        if iv <= 0:
+            return
+        
+        if symbol not in self.iv_history:
+            self.iv_history[symbol] = []
+        
+        self.iv_history[symbol].append(iv)
+        
+        # Keep last 1000 data points (approx 1 month of hourly checks)
+        if len(self.iv_history[symbol]) > 1000:
+            self.iv_history[symbol] = self.iv_history[symbol][-1000:]
+            
+        self._save_iv_history()
+
+    def get_iv_rank(self, symbol: str) -> float:
+        """
+        Calculate IV Rank (0-100) based on stored history.
+        IV Rank = (Current - Low) / (High - Low)
+        """
+        history = self.iv_history.get(symbol, [])
+        if not history:
+            return 50.0  # Default neutral if no data
+        
+        current = history[-1]
+        low = min(history)
+        high = max(history)
+        
+        if high == low:
+            return 50.0
+        
+        rank = ((current - low) / (high - low)) * 100
+        return max(0.0, min(100.0, rank))

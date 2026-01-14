@@ -66,6 +66,9 @@ class MarketFeed:
         self.vix_poller_task: Optional[asyncio.Task] = None
         self.vix_poller_running = False
         
+        # IV Poller (for IV Rank calculation)
+        self.iv_poller_task: Optional[asyncio.Task] = None
+        
         # Position Management (Smart Manager)
         self.open_positions: Dict[str, Dict] = {}
         self.position_manager_task: Optional[asyncio.Task] = None
@@ -370,6 +373,9 @@ class MarketFeed:
                 if not self.position_manager_task:
                     self.position_manager_task = asyncio.create_task(self._manage_positions_loop())
                 
+                if not self.iv_poller_task:
+                    self.iv_poller_task = asyncio.create_task(self._poll_iv_loop())
+                
                 async with websockets.connect(TRADIER_WS_URL) as websocket:
                     self.ws = websocket
                     self.connected = True
@@ -648,6 +654,71 @@ class MarketFeed:
                         return opts if isinstance(opts, list) else [opts]
                     return []
         except: return []
+
+    async def _get_atm_iv(self, symbol: str) -> float:
+        """Fetch At-The-Money Implied Volatility"""
+        # 1. Get Price
+        inds = self.alpha_engine.get_indicators(symbol)
+        price = inds.get('price')
+        if not price:
+            return 0.0
+
+        # 2. Get Expiration (~30 days out)
+        exp = await self._get_best_expiration(symbol)
+        if not exp:
+            return 0.0
+
+        # 3. Get Chain
+        chain = await self._get_option_chain(symbol, exp)
+        if not chain:
+            return 0.0
+
+        # 4. Find ATM Option
+        # Sort by distance to price
+        chain.sort(key=lambda x: abs(float(x.get('strike', 0)) - price))
+        
+        # Take the closest Call and Put
+        atm_call = next((x for x in chain if x.get('option_type', '').lower() == 'call'), None)
+        atm_put = next((x for x in chain if x.get('option_type', '').lower() == 'put'), None)
+        
+        ivs = []
+        if atm_call:
+            greeks = atm_call.get('greeks', {})
+            iv = float(greeks.get('mid_iv', 0) or greeks.get('iv', 0) or 0)
+            if iv > 0:
+                ivs.append(iv)
+        if atm_put:
+            greeks = atm_put.get('greeks', {})
+            iv = float(greeks.get('mid_iv', 0) or greeks.get('iv', 0) or 0)
+            if iv > 0:
+                ivs.append(iv)
+            
+        if not ivs:
+            return 0.0
+        
+        return sum(ivs) / len(ivs) * 100  # Convert to percentage (e.g. 0.15 -> 15.0)
+
+    async def _poll_iv_loop(self):
+        """Background task: Poll ATM IV every 15 minutes"""
+        logging.info("📊 IV Tracker: STARTED")
+        while not self.stop_signal:
+            for symbol in self.symbols:
+                try:
+                    iv = await self._get_atm_iv(symbol)
+                    if iv > 0:
+                        self.alpha_engine.update_iv(symbol, iv)
+                        rank = self.alpha_engine.get_iv_rank(symbol)
+                        logging.info(f"📊 IV UPDATE: {symbol} IV: {iv:.1f}% | Rank: {rank:.1f}")
+                except Exception as e:
+                    logging.error(f"⚠️ IV Poll Error ({symbol}): {e}")
+                
+                await asyncio.sleep(2)  # Stagger requests
+            
+            # Sleep 15 minutes
+            for _ in range(15 * 60):
+                if self.stop_signal:
+                    break
+                await asyncio.sleep(1)
 
     async def _send_proposal(self, symbol, strategy, side, option_type, indicators, bias, force_expiration=None):
         """Constructs proposal using REAL Delta Selection and REAL Pricing"""
