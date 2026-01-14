@@ -415,31 +415,34 @@ export class GatekeeperDO {
     }
 
     // DTE Check: Calculate from first leg's expiration
-    if (proposal.legs.length === 0) {
-      return {
-        status: 'REJECTED',
-        rejectionReason: 'Proposal must have at least one leg',
-        evaluatedAt,
-      };
-    }
+    // Skip for CLOSE proposals (we're just closing existing positions)
+    if (proposal.side === 'OPEN') {
+      if (proposal.legs.length === 0) {
+        return {
+          status: 'REJECTED',
+          rejectionReason: 'Proposal must have at least one leg',
+          evaluatedAt,
+        };
+      }
 
-    const firstLeg = proposal.legs[0];
-    if (!firstLeg.expiration) {
-      return {
-        status: 'REJECTED',
-        rejectionReason: 'Leg expiration date is required',
-        evaluatedAt,
-      };
-    }
+      const firstLeg = proposal.legs[0];
+      if (!firstLeg.expiration) {
+        return {
+          status: 'REJECTED',
+          rejectionReason: 'Leg expiration date is required',
+          evaluatedAt,
+        };
+      }
 
-        const dte = calculateDTE(firstLeg.expiration);
-    // Use Constitution limits instead of hardcoded 1-7 days
-    if (dte < CONSTITUTION.minDte || dte > CONSTITUTION.maxDte) {
-      return {
-        status: 'REJECTED',
-        rejectionReason: `DTE out of range: ${dte} days (must be ${CONSTITUTION.minDte}-${CONSTITUTION.maxDte} days)`,
-        evaluatedAt,
-      };
+      const dte = calculateDTE(firstLeg.expiration);
+      // Use Constitution limits instead of hardcoded 1-7 days
+      if (dte < CONSTITUTION.minDte || dte > CONSTITUTION.maxDte) {
+        return {
+          status: 'REJECTED',
+          rejectionReason: `DTE out of range: ${dte} days (must be ${CONSTITUTION.minDte}-${CONSTITUTION.maxDte} days)`,
+          evaluatedAt,
+        };
+      }
     }
 
     // 3.5. Event Calendar Check (Phase C, Step 3)
@@ -523,29 +526,32 @@ export class GatekeeperDO {
     }
 
     // 6. Context Checks
-    // VIX check: Reject if missing or too high
-    if (proposal.context.vix === undefined || proposal.context.vix === null) {
-      return {
-        status: 'REJECTED',
-        rejectionReason: 'VIX not available - system not warmed up or data fetch failed',
-        evaluatedAt,
-      };
-    }
-    
-    if (proposal.context.vix > 28) {
-      return {
-        status: 'REJECTED',
-        rejectionReason: `VIX too high: ${proposal.context.vix} (max: 28)`,
-        evaluatedAt,
-      };
-    }
+    // Skip context validation for CLOSE proposals (we're just closing existing positions)
+    if (proposal.side === 'OPEN') {
+      // VIX check: Reject if missing or too high
+      if (proposal.context.vix === undefined || proposal.context.vix === null) {
+        return {
+          status: 'REJECTED',
+          rejectionReason: 'VIX not available - system not warmed up or data fetch failed',
+          evaluatedAt,
+        };
+      }
+      
+      if (proposal.context.vix > 28) {
+        return {
+          status: 'REJECTED',
+          rejectionReason: `VIX too high: ${proposal.context.vix} (max: 28)`,
+          evaluatedAt,
+        };
+      }
 
-    if (proposal.context.flow_state === 'UNKNOWN') {
-      return {
-        status: 'REJECTED',
-        rejectionReason: 'Flow state is UNKNOWN',
-        evaluatedAt,
-      };
+      if (proposal.context.flow_state === 'UNKNOWN') {
+        return {
+          status: 'REJECTED',
+          rejectionReason: 'Flow state is UNKNOWN',
+          evaluatedAt,
+        };
+      }
     }
 
     // All checks passed
