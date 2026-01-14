@@ -460,27 +460,6 @@ class MarketFeed:
                                         pos['cancel_attempt_time'] = now.isoformat()
                                         self._save_positions_to_disk()
                                         await asyncio.sleep(10)  # Extended delay before next attempt
-                                else:
-                                    # Cancellation failed - might be API error or order already filled
-                                    # Check status one more time before giving up
-                                    await asyncio.sleep(3)
-                                    final_status = await self._get_order_status(order_id)
-                                    if final_status in ['filled', 'canceled']:
-                                        logging.info(f"✅ Order {order_id} is now {final_status} after failed cancel attempt")
-                                        if final_status == 'filled':
-                                            del self.open_positions[trade_id]
-                                            self._save_positions_to_disk()
-                                        else:
-                                            pos['status'] = 'OPEN'
-                                            del pos['close_order_id']
-                                            pos['last_close_attempt'] = now
-                                            self._save_positions_to_disk()
-                                    else:
-                                        # Still pending - wait before retrying cancellation
-                                        logging.info(f"⏳ Order {order_id} still {final_status}, will retry cancellation later")
-                                        pos['cancel_attempt_time'] = now.isoformat()
-                                        self._save_positions_to_disk()
-                                        await asyncio.sleep(10)  # Extended delay before next attempt
                     continue
                 
                 else:
