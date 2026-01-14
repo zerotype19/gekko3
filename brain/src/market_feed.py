@@ -141,7 +141,10 @@ class MarketFeed:
         return {}
 
     async def _manage_positions(self):
-        """Check exit rules for all open trades"""
+        """
+        Smart Manager 2.0: Advanced Exit Logic
+        Includes: Trailing Stops, Technical Guards (SMA/ADX), and Hard Stops.
+        """
         # 1. Collect all option symbols we need to check
         all_legs = []
         for pos in self.open_positions.values():
@@ -159,79 +162,127 @@ class MarketFeed:
         # 3. Check Rules
         now = datetime.now()
         for trade_id, pos in list(self.open_positions.items()):
-            # Calculate current spread price (cost to close)
-            # For Credit Spread Close: Cost = Buy back Short leg - Sell Long leg
-            # Cost = Short_Ask - Long_Bid (using mid prices from quotes)
+            symbol = pos['symbol']
+            
+            # --- P&L CALCULATION ---
             cost_to_close = 0.0
+            missing_quote = False
             for leg in pos['legs']:
                 price = quotes.get(leg['symbol'], 0)
                 if price == 0:
-                    # Missing quote data, skip this trade
-                    continue
-                if leg['side'] == 'SELL':  # We are Short this leg
-                    cost_to_close += price  # We pay to buy it back
-                else:  # We are Long this leg
-                    cost_to_close -= price  # We get paid to sell it
+                    missing_quote = True
+                # To Close: Buy Short (+), Sell Long (-)
+                if leg['side'] == 'SELL':
+                    cost_to_close += price
+                else:
+                    cost_to_close -= price
             
-            if cost_to_close == 0:
-                continue  # Skip if no valid quotes
+            if missing_quote or cost_to_close <= 0:
+                continue
             
-            # P&L Calculation
-            # Entry Credit = pos['entry_price']
-            # Current P&L = Entry Credit - Cost to Close
             entry_credit = pos['entry_price']
-            pnl_val = entry_credit - cost_to_close
-            pnl_pct = (pnl_val / entry_credit) * 100 if entry_credit > 0 else 0
+            # ROI: (Entry - Current) / Entry. Example: Sold @ 1.00, Buy @ 0.50 = 50% Profit
+            pnl_pct = ((entry_credit - cost_to_close) / entry_credit) * 100
+            
+            # Update High Water Mark (Trailing Stop Base)
+            if pnl_pct > pos.get('highest_pnl', -100):
+                pos['highest_pnl'] = pnl_pct
 
+            # --- EXIT REASONING ---
             should_close = False
             reason = ""
             
-            # Detect Scalper: Check if expiration is today (0DTE)
+            # Get latest technicals for context
+            indicators = self.alpha_engine.get_indicators(symbol)
+            current_price = indicators['price']
+            sma_200 = indicators.get('sma_200')
+            adx = self.alpha_engine.get_adx(symbol)
+
+            # Detect Strategy Type
             is_scalper = False
             if pos['legs']:
-                exp_str = pos['legs'][0].get('expiration', '')
                 try:
-                    exp_date = datetime.strptime(exp_str, '%Y-%m-%d').date()
-                    today = datetime.now().date()
-                    is_scalper = (exp_date - today).days == 0
+                    exp_str = pos['legs'][0].get('expiration', '')
+                    exp = datetime.strptime(exp_str, '%Y-%m-%d').date()
+                    if (exp - now.date()).days == 0:
+                        is_scalper = True
                 except:
                     pass
-            
-            # A. SCALPER RULES
+
+            # ----------------------------------------
+            # STRATEGY 1: SCALPER (0DTE)
+            # ----------------------------------------
             if is_scalper:
-                rsi = self.alpha_engine.get_rsi(pos['symbol'], period=2)
-                
-                # Mean Reversion Exit
+                rsi = indicators['rsi']
+                # Rule A: Mean Reversion (Classic)
                 if rsi is not None:
-                    if pos.get('bias') == 'bullish' and rsi > 50:
+                    if pos.get('bias') == 'bullish' and rsi > 60:  # Let it run a bit more than 50
                         should_close = True
-                        reason = f"RSI Mean Reversion ({rsi:.1f})"
-                    elif pos.get('bias') == 'bearish' and rsi < 50:
+                        reason = f"Scalp Win (RSI {rsi:.1f})"
+                    elif pos.get('bias') == 'bearish' and rsi < 40:
                         should_close = True
-                        reason = f"RSI Mean Reversion ({rsi:.1f})"
+                        reason = f"Scalp Win (RSI {rsi:.1f})"
                 
-                # Hard Stop (20% Loss)
+                # Rule B: Hard Stop
                 if pnl_pct < -20:
                     should_close = True
-                    reason = "Hard Stop (-20%)"
+                    reason = "Scalp Hard Stop (-20%)"
 
-            # B. STANDARD RULES (Trend/ORB/Farmer)
-            else:
-                # Take Profit (+50%)
+            # ----------------------------------------
+            # STRATEGY 2: TREND & ORB (Directional)
+            # ----------------------------------------
+            elif pos['strategy'] == 'CREDIT_SPREAD' and pos.get('bias') in ['bullish', 'bearish']:
+                # Rule A: Trailing Stop (The "Let Winners Run" Rule)
+                # If we hit 30% profit, trigger trail. Close if we drop 10% from peak.
+                if pos['highest_pnl'] >= 30 and (pos['highest_pnl'] - pnl_pct) >= 10:
+                    should_close = True
+                    reason = f"Trailing Stop (Peak {pos['highest_pnl']:.1f}%)"
+                
+                # Rule B: Technical Fail (Trend Reversal)
+                # Bullish trade but Price crashes below SMA 200? Get out.
+                if pos.get('bias') == 'bullish' and sma_200 and current_price < sma_200:
+                    should_close = True
+                    reason = "Trend Broken (Price < SMA200)"
+                # Bearish trade but Price rallies above SMA 200? Get out.
+                if pos.get('bias') == 'bearish' and sma_200 and current_price > sma_200:
+                    should_close = True
+                    reason = "Trend Broken (Price > SMA200)"
+
+                # Rule C: Hard Target/Stop (Safety Net)
+                if pnl_pct >= 80:
+                    should_close = True
+                    reason = "Max Profit (+80%)"
+                if pnl_pct <= -100:
+                    should_close = True
+                    reason = "Stop Loss (-100%)"
+
+            # ----------------------------------------
+            # STRATEGY 3: RANGE FARMER (Neutral)
+            # ----------------------------------------
+            elif pos.get('bias') == 'neutral':
+                # Rule A: Volatility Spike (ADX)
+                # If ADX goes above 30, the market is trending. Condors will die. Exit.
+                if adx is not None and adx > 30:
+                    should_close = True
+                    reason = f"Volatility Spike (ADX {adx:.1f})"
+                
+                # Rule B: Standard Profit/Loss
                 if pnl_pct >= 50:
                     should_close = True
                     reason = "Take Profit (+50%)"
-                
-                # Stop Loss (-200%) - Safety Net
-                if pnl_pct <= -200:
+                if pnl_pct <= -100:
                     should_close = True
-                    reason = "Stop Loss (-200%)"
-                
-                # EOD Force Close (3:55 PM)
-                if now.hour == 15 and now.minute >= 55:
-                    should_close = True
-                    reason = "EOD Auto-Close"
+                    reason = "Stop Loss (-100%)"
 
+            # ----------------------------------------
+            # GLOBAL RULES
+            # ----------------------------------------
+            # EOD Force Close (3:55 PM)
+            if now.hour == 15 and now.minute >= 55:
+                should_close = True
+                reason = "EOD Auto-Close"
+
+            # EXECUTE
             if should_close:
                 logging.info(f"🛑 CLOSING {trade_id} | P&L: {pnl_pct:.1f}% | Reason: {reason}")
                 await self._execute_close(trade_id, pos, cost_to_close)
@@ -714,6 +765,7 @@ class MarketFeed:
                 'legs': proposal['legs'],  # Contains the specific option symbols
                 'entry_price': proposal['price'],
                 'bias': bias,
-                'timestamp': datetime.now()
+                'timestamp': datetime.now(),
+                'highest_pnl': -100.0  # NEW: Initialize for Trailing Stop tracking
             }
             logging.info(f"📝 Tracking Trade: {trade_id}")
