@@ -92,6 +92,39 @@ class MarketFeed:
         # Load positions from disk on startup (survive restarts)
         self._load_positions_from_disk()
     
+    def _save_positions_to_disk(self):
+        """Persist open positions to disk to survive restarts"""
+        try:
+            with open(self.positions_file, 'w') as f:
+                # Convert datetime objects to strings for JSON
+                serializable = {}
+                for k, v in self.open_positions.items():
+                    serializable[k] = v.copy()
+                    # Convert datetime to ISO string
+                    if 'timestamp' in serializable[k] and isinstance(serializable[k]['timestamp'], datetime):
+                        serializable[k]['timestamp'] = serializable[k]['timestamp'].isoformat()
+                json.dump(serializable, f, indent=2)
+                logging.debug(f"💾 Saved {len(self.open_positions)} positions to disk")
+        except Exception as e:
+            logging.error(f"⚠️ Failed to save positions: {e}")
+
+    def _load_positions_from_disk(self):
+        """Load positions from disk on startup"""
+        if not os.path.exists(self.positions_file):
+            return
+        try:
+            with open(self.positions_file, 'r') as f:
+                data = json.load(f)
+                for k, v in data.items():
+                    # Restore datetime objects
+                    if 'timestamp' in v and isinstance(v['timestamp'], str):
+                        v['timestamp'] = datetime.fromisoformat(v['timestamp'])
+                    self.open_positions[k] = v
+            if self.open_positions:
+                logging.info(f"♻️ Restored {len(self.open_positions)} positions from disk")
+        except Exception as e:
+            logging.error(f"⚠️ Failed to load positions: {e}")
+
     def export_state(self):
         """Dumps RICH brain state to JSON for the dashboard (Phase C: Step 3)"""
         
