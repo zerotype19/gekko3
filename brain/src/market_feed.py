@@ -54,7 +54,15 @@ class MarketFeed:
         if not self.access_token:
             raise ValueError('TRADIER_ACCESS_TOKEN must be set in .env')
         
-        self.account_id = None  # Fetched on connect
+        # For order status checks, we need SANDBOX token (where orders are executed)
+        # Brain uses PRODUCTION token for WebSocket, but Gatekeeper uses SANDBOX for execution
+        self.sandbox_token = os.getenv('TRADIER_SANDBOX_TOKEN', '')
+        if not self.sandbox_token:
+            # Fallback to known sandbox token
+            self.sandbox_token = 'XFE6d2z7hJnleNbpQ789otJmvW3z'
+            logging.warning("⚠️ Using hardcoded sandbox token for order checks. Set TRADIER_SANDBOX_TOKEN in .env")
+        
+        self.account_id = None  # Fetched on connect (SANDBOX account)
         
         self.ws: Optional[websockets.WebSocketClientProtocol] = None
         self.connected = False
@@ -178,36 +186,47 @@ class MarketFeed:
 
     # --- HELPERS FOR ORDER MANAGEMENT ---
     async def _fetch_account_id(self):
-        """Fetches the account ID if not already known"""
+        """Fetches the SANDBOX account ID if not already known"""
         if self.account_id: 
             return self.account_id
         
-        headers = {'Authorization': f'Bearer {self.access_token}', 'Accept': 'application/json'}
+        # Use SANDBOX token and API for account lookup (where orders are executed)
+        sandbox_api_base = "https://sandbox.tradier.com/v1"
+        headers = {'Authorization': f'Bearer {self.sandbox_token}', 'Accept': 'application/json'}
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(f"{TRADIER_API_BASE}/user/profile", headers=headers) as resp:
+                async with session.get(f"{sandbox_api_base}/user/profile", headers=headers) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         acct = data['profile']['account']
-                        if isinstance(acct, list):
-                            self.account_id = acct[0]['account_number']
-                        else:
-                            self.account_id = acct['account_number']
-                        logging.info(f"✅ Account ID identified: {self.account_id}")
-                        return self.account_id
+                        accounts = acct if isinstance(acct, list) else [acct]
+                        # Find VA account (paper trading)
+                        for acc in accounts:
+                            acc_num = acc['account_number'] if isinstance(acc, dict) else acc
+                            if str(acc_num).startswith('VA'):
+                                self.account_id = str(acc_num)
+                                logging.info(f"✅ SANDBOX Account ID identified: {self.account_id}")
+                                return self.account_id
+                        # Fallback to first account
+                        if accounts:
+                            self.account_id = accounts[0]['account_number'] if isinstance(accounts[0], dict) else str(accounts[0])
+                            logging.info(f"✅ Account ID identified: {self.account_id}")
+                            return self.account_id
         except Exception as e:
             logging.error(f"Failed to fetch account ID: {e}")
         return None
 
     async def _get_order_status(self, order_id: str) -> Optional[str]:
-        """Check status of a specific order"""
+        """Check status of a specific order (uses SANDBOX API where orders are executed)"""
         if not self.account_id: 
             await self._fetch_account_id()
         if not self.account_id: 
             return None
 
-        headers = {'Authorization': f'Bearer {self.access_token}', 'Accept': 'application/json'}
-        url = f"{TRADIER_API_BASE}/accounts/{self.account_id}/orders/{order_id}"
+        # Use SANDBOX API for order status checks (Gatekeeper executes orders in sandbox)
+        sandbox_api_base = "https://sandbox.tradier.com/v1"
+        headers = {'Authorization': f'Bearer {self.sandbox_token}', 'Accept': 'application/json'}
+        url = f"{sandbox_api_base}/accounts/{self.account_id}/orders/{order_id}"
         
         try:
             async with aiohttp.ClientSession() as session:
@@ -221,14 +240,16 @@ class MarketFeed:
         return None
 
     async def _cancel_order(self, order_id: str):
-        """Cancel a pending order"""
+        """Cancel a pending order (uses SANDBOX API where orders are executed)"""
         if not self.account_id: 
             await self._fetch_account_id()
         if not self.account_id: 
             return
 
-        headers = {'Authorization': f'Bearer {self.access_token}', 'Accept': 'application/json'}
-        url = f"{TRADIER_API_BASE}/accounts/{self.account_id}/orders/{order_id}"
+        # Use SANDBOX API for order cancellation (Gatekeeper executes orders in sandbox)
+        sandbox_api_base = "https://sandbox.tradier.com/v1"
+        headers = {'Authorization': f'Bearer {self.sandbox_token}', 'Accept': 'application/json'}
+        url = f"{sandbox_api_base}/accounts/{self.account_id}/orders/{order_id}"
         
         try:
             async with aiohttp.ClientSession() as session:
