@@ -37,7 +37,7 @@ export const CONSTITUTION: RiskConfig = {
   // Risk Limits (Phase C)
   riskLimits: {
     maxCorrelatedPositions: 2, // MAX 2 directional trades per group (e.g., 1 SPY + 1 QQQ is ok, but not 3)
-    maxTotalPositions: 5,
+    maxTotalPositions: 20, // Match maxOpenPositions for testing (was 5, increased to allow full testing)
   },
 
   // Execution Constraints
