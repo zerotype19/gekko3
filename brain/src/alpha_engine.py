@@ -344,7 +344,13 @@ class AlphaEngine:
             metadata: Dict with details (vwap, volume_velocity, price, etc.)
         """
         if self.candles[symbol].empty and symbol not in self.current_bars:
-            return 'NEUTRAL', {'reason': 'No data available'}
+            return 'NEUTRAL', {
+                'reason': 'No data available',
+                'price': 0.0,
+                'vwap': 0.0,
+                'volume_velocity': 0.0,
+                'candle_count': 0
+            }
 
         price = self.get_current_price(symbol)
         vwap = self._calculate_vwap(symbol)
