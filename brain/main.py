@@ -279,6 +279,16 @@ async def main():
     brain = None
     
     try:
+        # Auto-sync positions from Tradier before starting the Brain
+        try:
+            logging.info("🔄 Syncing positions from Tradier...")
+            from recover_positions import run_recovery
+            run_recovery()
+            logging.info("✅ Position sync complete")
+        except Exception as e:
+            logging.warning(f"⚠️ Position sync failed (will use disk cache): {e}")
+            # Continue anyway - brain will load from disk if available
+        
         brain = BrainSupervisor()
         
         # Handle Ctrl+C - use event to trigger async shutdown
