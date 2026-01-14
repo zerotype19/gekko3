@@ -6,89 +6,91 @@
 import { GatekeeperDO } from './GatekeeperDO';
 import type { Env } from './config';
 
-// UI HTML (embedded for simplicity)
+// UI HTML (Pro Dashboard - Phase C: Final Polish)
 const UI_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gekko3 Command Center</title>
+    <title>Gekko3 Pro Terminal</title>
     <style>
-        :root { --bg: #0f172a; --card: #1e293b; --text: #e2e8f0; --green: #22c55e; --red: #ef4444; --blue: #3b82f6; }
-        body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; display: flex; justify-content: center; }
-        .container { width: 100%; max-width: 600px; display: flex; flex-direction: column; gap: 20px; }
-        .card { background: var(--card); padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-        h1 { margin: 0; font-size: 1.5rem; }
-        .status-badge { padding: 4px 12px; border-radius: 99px; font-weight: bold; font-size: 0.875rem; }
-        .status-normal { background: rgba(34, 197, 94, 0.2); color: var(--green); }
-        .status-locked { background: rgba(239, 68, 68, 0.2); color: var(--red); }
-        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
-        .metric { display: flex; flex-direction: column; }
-        .label { font-size: 0.75rem; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.05em; }
-        .value { font-size: 1.5rem; font-weight: bold; }
-        .controls { display: flex; gap: 10px; }
+        :root { --bg: #0f172a; --card: #1e293b; --text: #e2e8f0; --green: #22c55e; --red: #ef4444; --orange: #f59e0b; --blue: #3b82f6; }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; display: flex; justify-content: center; }
+        .container { width: 100%; max-width: 800px; display: flex; flex-direction: column; gap: 20px; }
+        .card { background: var(--card); padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2); }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 15px; margin-bottom: 20px; }
+        h1 { margin: 0; font-size: 1.5rem; letter-spacing: -0.5px; }
+        .status-badge { padding: 4px 12px; border-radius: 99px; font-weight: bold; font-size: 0.8rem; letter-spacing: 0.05em; }
+        .status-normal { background: rgba(34, 197, 94, 0.15); color: var(--green); border: 1px solid rgba(34, 197, 94, 0.3); }
+        .status-locked { background: rgba(239, 68, 68, 0.15); color: var(--red); border: 1px solid rgba(239, 68, 68, 0.3); }
+        
+        .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
+        .metric { display: flex; flex-direction: column; background: rgba(0,0,0,0.2); padding: 12px; border-radius: 8px; }
+        .label { font-size: 0.7rem; opacity: 0.6; text-transform: uppercase; margin-bottom: 4px; }
+        .value { font-size: 1.4rem; font-weight: 700; }
+        .sub-value { font-size: 0.85rem; opacity: 0.8; margin-top: 4px; }
+
+        .section-title { font-size: 0.9rem; opacity: 0.5; text-transform: uppercase; margin-bottom: 10px; font-weight: 600; }
+        
+        .controls { display: flex; gap: 10px; margin-top: 20px; }
         button { flex: 1; padding: 12px; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; transition: 0.2s; }
-        .btn-lock { background: var(--red); color: white; }
-        .btn-unlock { background: var(--green); color: white; }
-        .btn-lock:hover, .btn-unlock:hover { opacity: 0.9; }
+        .btn-lock { background: rgba(239, 68, 68, 0.2); color: var(--red); border: 1px solid var(--red); }
+        .btn-unlock { background: rgba(34, 197, 94, 0.2); color: var(--green); border: 1px solid var(--green); }
+        .btn-lock:hover, .btn-unlock:hover { opacity: 0.8; }
+        
         .hidden { display: none; }
-        .lock-reason { margin-top: 10px; padding: 10px; background: rgba(239, 68, 68, 0.1); border-radius: 6px; font-size: 0.875rem; }
-        .log-box { background: #000; padding: 10px; border-radius: 8px; font-family: monospace; font-size: 0.8rem; height: 200px; overflow-y: auto; color: #0f0; }
-        table { width: 100%; border-collapse: collapse; }
-        th { text-align: left; opacity: 0.6; border-bottom: 1px solid #333; padding: 8px 0; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
-        td { padding: 8px 0; border-bottom: 1px solid #222; }
-        h3 { margin-top: 0; margin-bottom: 10px; }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="card">
             <div class="header">
-                <h1>Gekko3 Command Center</h1>
+                <h1>Gekko3 <span style="opacity:0.5; font-weight:400;">Pro</span></h1>
                 <span id="systemStatus" class="status-badge status-normal">LOADING...</span>
             </div>
-            <div id="lockReason" class="lock-reason hidden"></div>
+            
+            <div class="section-title">Account & Risk</div>
             <div class="grid">
-                <div class="metric">
-                    <span class="label">Positions</span>
-                    <span id="posCount" class="value">--</span>
-                </div>
-                <div class="metric">
-                    <span class="label">Daily PnL</span>
-                    <span id="pnl" class="value">--</span>
-                </div>
-                <div class="metric">
-                    <span class="label">Heartbeat</span>
-                    <span id="heartbeat" class="value">--</span>
-                </div>
                 <div class="metric">
                     <span class="label">Equity</span>
                     <span id="equity" class="value">--</span>
                 </div>
+                <div class="metric">
+                    <span class="label">Day P&L</span>
+                    <span id="pnl" class="value">--</span>
+                </div>
+                <div class="metric">
+                    <span class="label">Portfolio Delta</span>
+                    <span id="delta" class="value">--</span>
+                </div>
+                <div class="metric">
+                    <span class="label">Portfolio Theta</span>
+                    <span id="theta" class="value" style="color: var(--green)">--</span>
+                </div>
+            </div>
+
+            <div class="section-title" style="margin-top: 20px;">Market Intelligence</div>
+            <div class="grid">
+                <div class="metric" style="grid-column: span 2;">
+                    <span class="label">Market Regime</span>
+                    <span id="regime" class="value" style="color: var(--blue)">WAITING...</span>
+                </div>
+                <div class="metric">
+                    <span class="label">SPY IV Rank</span>
+                    <span id="ivRank" class="value">--</span>
+                </div>
+                <div class="metric">
+                    <span class="label">Brain Heartbeat</span>
+                    <span id="heartbeat" class="value">--</span>
+                </div>
             </div>
         </div>
 
         <div class="card">
-            <h3 style="margin-top: 0;">Emergency Controls</h3>
+            <div class="section-title">Emergency Override</div>
             <div class="controls">
                 <button id="btnLock" class="btn-lock" onclick="toggleLock(true)">🔒 LOCK SYSTEM</button>
                 <button id="btnUnlock" class="btn-unlock hidden" onclick="toggleLock(false)">🔓 UNLOCK SYSTEM</button>
-            </div>
-            <p style="font-size: 0.8rem; opacity: 0.6; margin-top: 10px;">Locking prevents all new trades immediately.</p>
-        </div>
-
-        <div class="card">
-            <h3>Active Positions</h3>
-            <div id="positionsList" style="margin-top: 10px; font-size: 0.9rem;">
-                <div style="opacity: 0.5; font-style: italic;">No active positions</div>
-            </div>
-        </div>
-
-        <div class="card">
-            <h3>Recent Activity (Brain Log)</h3>
-            <div class="log-box" id="activityLog">
-                <div>Loading...</div>
             </div>
         </div>
     </div>
@@ -100,19 +102,79 @@ const UI_HTML = `<!DOCTYPE html>
             try {
                 const res = await fetch(\`\${API_BASE}/status\`);
                 const data = await res.json();
-                
+                const bs = data.brainState || {};
+                const greeks = bs.greeks || {};
+
+                // 1. Status Badge
                 const statusBadge = document.getElementById('systemStatus');
                 const btnLock = document.getElementById('btnLock');
                 const btnUnlock = document.getElementById('btnUnlock');
-                const lockReasonEl = document.getElementById('lockReason');
                 
                 if (data.status === 'LOCKED') {
-                    statusBadge.textContent = 'SYSTEM LOCKED';
+                    statusBadge.textContent = \`LOCKED: \${data.lockReason || 'Manual'}\`;
                     statusBadge.className = 'status-badge status-locked';
                     btnLock.classList.add('hidden');
                     btnUnlock.classList.remove('hidden');
-                    if (data.lockReason) {
-                        lockReasonEl.textContent = \`Lock Reason: \${data.lockReason}\`;
+                } else {
+                    statusBadge.textContent = 'SYSTEM ACTIVE';
+                    statusBadge.className = 'status-badge status-normal';
+                    btnLock.classList.remove('hidden');
+                    btnUnlock.classList.add('hidden');
+                }
+
+                // 2. Account Metrics
+                document.getElementById('equity').textContent = '$' + (data.equity || 0).toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 0});
+                
+                const pnl = data.dailyPnL || 0;
+                const pnlEl = document.getElementById('pnl');
+                pnlEl.textContent = (pnl >= 0 ? '+' : '') + (pnl * 100).toFixed(2) + '%';
+                pnlEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+
+                // 3. Brain Metrics (The New Stuff)
+                document.getElementById('regime').textContent = bs.regime || 'WAITING...';
+                document.getElementById('ivRank').textContent = bs.iv_rank_spy ? Math.round(bs.iv_rank_spy) : '--';
+                
+                const delta = greeks.delta || 0;
+                const deltaEl = document.getElementById('delta');
+                deltaEl.textContent = (delta > 0 ? '+' : '') + delta.toFixed(1);
+                deltaEl.style.color = Math.abs(delta) > 50 ? 'var(--orange)' : 'var(--text)'; // Warn if high delta
+
+                document.getElementById('theta').textContent = '+' + (greeks.theta || 0).toFixed(1);
+
+                // 4. Heartbeat
+                const lastHeartbeat = data.lastHeartbeat || 0;
+                const secondsAgo = lastHeartbeat > 0 ? Math.floor((Date.now() - lastHeartbeat) / 1000) : 999;
+                const hbEl = document.getElementById('heartbeat');
+                
+                if (secondsAgo < 60) {
+                    hbEl.textContent = '🟢 Online';
+                    hbEl.style.color = 'var(--green)';
+                } else {
+                    hbEl.textContent = \`🔴 \${secondsAgo}s Ago\`;
+                    hbEl.style.color = 'var(--red)';
+                }
+
+            } catch (e) { console.error(e); }
+        }
+
+        async function toggleLock(lock) {
+            const endpoint = lock ? 'admin/lock' : 'admin/unlock';
+            const reason = lock ? prompt("Reason:", "Manual") : null;
+            if (lock && !reason) return;
+            await fetch(\`\${API_BASE}/\${endpoint}\`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reason })
+            });
+            updateStatus();
+        }
+
+        setInterval(updateStatus, 2000);
+        updateStatus();
+    </script>
+</body>
+</html>
+`;
                         lockReasonEl.classList.remove('hidden');
                     } else {
                         lockReasonEl.classList.add('hidden');

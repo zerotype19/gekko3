@@ -874,8 +874,19 @@ export class GatekeeperDO {
   /**
    * Receive heartbeat from Brain (indicates Brain is alive)
    */
-  async receiveHeartbeat(): Promise<Response> {
+  async receiveHeartbeat(request: Request): Promise<Response> {
     this.lastHeartbeat = Date.now();
+    
+    try {
+      const body = await request.json() as any;
+      // Store the rich state if provided (Phase C: Final Polish)
+      if (body.state) {
+        await this.state.storage.put('brainState', body.state);
+      }
+    } catch (e) {
+      // Ignore parsing errors, heartbeat is still valid
+    }
+
     return new Response(JSON.stringify({ status: 'OK' }), {
       headers: { 'Content-Type': 'application/json' },
     });
@@ -927,6 +938,9 @@ export class GatekeeperDO {
       rejectionReason: p.rejection_reason,
     }));
 
+    // Fetch stored Brain State (Phase C: Final Polish)
+    const brainState = await this.state.storage.get('brainState');
+
     return {
       status: this.systemLocked ? 'LOCKED' : 'NORMAL',
       lockReason: this.lockReason,
@@ -937,6 +951,7 @@ export class GatekeeperDO {
       lastHeartbeat: this.lastHeartbeat,
       activePositions,
       recentProposals,
+      brainState, // Add brain state to response
     };
   }
 
@@ -1098,7 +1113,7 @@ export class GatekeeperDO {
 
     // Handle heartbeat from Brain
     if (path === '/heartbeat' && request.method === 'POST') {
-      return this.receiveHeartbeat();
+      return this.receiveHeartbeat(request);
     }
 
     // Handle alarm trigger (for scheduled events)

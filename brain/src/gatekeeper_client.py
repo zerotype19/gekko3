@@ -228,11 +228,12 @@ class GatekeeperClient:
             if not use_external_session:
                 await session.close()
 
-    async def send_heartbeat(self, session: Optional[aiohttp.ClientSession] = None) -> Dict[str, Any]:
+    async def send_heartbeat(self, brain_state: Optional[Dict[str, Any]] = None, session: Optional[aiohttp.ClientSession] = None) -> Dict[str, Any]:
         """
-        Send heartbeat to Gatekeeper (indicates Brain is alive)
+        Send heartbeat to Gatekeeper with optional rich state (Phase C: Final Polish)
         
         Args:
+            brain_state: Optional dictionary containing brain state (regime, greeks, iv_rank, etc.)
             session: Optional aiohttp session (creates new one if not provided)
             
         Returns:
@@ -247,8 +248,13 @@ class GatekeeperClient:
         if not use_external_session:
             session = aiohttp.ClientSession()
         
+        # Prepare payload with optional state
+        payload = {}
+        if brain_state:
+            payload['state'] = brain_state
+        
         try:
-            async with session.post(url, json={}) as response:
+            async with session.post(url, json=payload) as response:
                 if response.status == 200:
                     data = await response.json()
                     return {
