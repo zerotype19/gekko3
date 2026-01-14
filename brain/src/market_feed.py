@@ -135,6 +135,9 @@ class MarketFeed:
                 json.dump(final_export, f, indent=2)
         except Exception as e:
             logging.error(f"Failed to export state: {e}")
+        
+        # Return the data (for heartbeat payload)
+        return final_export
 
     # --- POSITION MANAGEMENT (AUTOPILOT) ---
     

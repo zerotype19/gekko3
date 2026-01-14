@@ -149,33 +149,26 @@ class BrainSupervisor:
                             logging.error(f"❌ Feed crashed: {e}. Restarting...")
                             self.feed_task = asyncio.create_task(self.market_feed.connect())
                 
-                # Send heartbeat every minute with rich state (Phase C: Final Polish)
+                # Send heartbeat every minute with rich state (Phase C: Final Polish - Remote Command Center)
                 now_ts = datetime.now(self.tz).timestamp()
                 if now_ts - self.last_heartbeat_time >= 60:  # Every 60 seconds
                     try:
-                        # Collect Rich State (safe access to avoid crashes during startup)
-                        regime_val = "UNKNOWN"
-                        try:
-                            regime_val = self.regime_engine.get_regime('SPY').value
-                        except:
-                            pass
+                        # 1. Generate Full Export (System + Market Data)
+                        # We use the method we built for the local dashboard!
+                        full_state = self.market_feed.export_state()  # Returns {'system': ..., 'market': ...}
                         
-                        iv_rank_val = 0
-                        try:
-                            iv_rank_val = self.alpha_engine.get_iv_rank('SPY')
-                        except:
-                            pass
-                        
+                        # 2. Construct Payload (flatten slightly for the Gatekeeper)
                         brain_state = {
-                            'regime': regime_val,
-                            'greeks': self.market_feed.portfolio_greeks,  # Live Delta/Theta/Vega
-                            'iv_rank_spy': iv_rank_val
+                            'regime': full_state.get('system', {}).get('regime', 'UNKNOWN'),
+                            'greeks': full_state.get('system', {}).get('portfolio_risk', {}),
+                            'iv_rank_spy': self.alpha_engine.get_iv_rank('SPY'),
+                            'market': full_state.get('market', {})  # <--- THE NEW DATA (Full Asset Surveillance)
                         }
                         
                         # Send to Gatekeeper
                         await self.gatekeeper.send_heartbeat(brain_state)
                         self.last_heartbeat_time = now_ts
-                        logging.debug("💓 Heartbeat sent with rich state")
+                        logging.debug("💓 Heartbeat sent with RICH MARKET DATA")
                     except Exception as e:
                         # Fallback to simple heartbeat if state collection fails
                         try:
