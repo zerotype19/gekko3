@@ -43,23 +43,94 @@ export class TradierClient {
 
     if (!response.ok) {
       const errorText = await response.text();
-      // Enhanced error logging - try to parse JSON error if available
+      
+      // Enhanced error parsing - Tradier API can return various error formats
       let errorDetails = errorText;
+      let errorSummary = errorText;
+      let errorCode: string | undefined;
+      let errorFields: string[] = [];
+      
       try {
         const errorJson = JSON.parse(errorText);
+        
+        // Extract error details based on common Tradier error structures
         if (errorJson.errors) {
-          errorDetails = JSON.stringify(errorJson.errors, null, 2);
+          // Array of error objects: [{ field: 'symbol', message: '...' }]
+          if (Array.isArray(errorJson.errors)) {
+            const messages = errorJson.errors.map((e: any) => {
+              if (e.field) errorFields.push(e.field);
+              return e.message || e.error || JSON.stringify(e);
+            });
+            errorSummary = messages.join('; ');
+            errorDetails = JSON.stringify(errorJson.errors, null, 2);
+          } else if (typeof errorJson.errors === 'object') {
+            // Single error object
+            errorSummary = errorJson.errors.message || errorJson.errors.error || JSON.stringify(errorJson.errors);
+            errorDetails = JSON.stringify(errorJson.errors, null, 2);
+          } else {
+            errorSummary = String(errorJson.errors);
+            errorDetails = JSON.stringify(errorJson.errors, null, 2);
+          }
         } else if (errorJson.error) {
-          errorDetails = errorJson.error;
-        } else {
+          // Single error string or object
+          if (typeof errorJson.error === 'object') {
+            errorSummary = errorJson.error.message || errorJson.error.description || JSON.stringify(errorJson.error);
+            errorDetails = JSON.stringify(errorJson.error, null, 2);
+            if (errorJson.error.code) errorCode = errorJson.error.code;
+          } else {
+            errorSummary = String(errorJson.error);
+            errorDetails = errorJson.error;
+          }
+        } else if (errorJson.fault) {
+          // SOAP-style fault
+          errorSummary = errorJson.fault.faultstring || JSON.stringify(errorJson.fault);
+          errorDetails = JSON.stringify(errorJson.fault, null, 2);
+        } else if (errorJson.message) {
+          errorSummary = errorJson.message;
           errorDetails = JSON.stringify(errorJson, null, 2);
+        } else {
+          // Unknown structure, include full JSON
+          errorSummary = JSON.stringify(errorJson);
+          errorDetails = JSON.stringify(errorJson, null, 2);
+        }
+        
+        // Extract error code if available
+        if (!errorCode && errorJson.code) {
+          errorCode = String(errorJson.code);
         }
       } catch {
         // Not JSON, use text as-is
+        errorSummary = errorText.substring(0, 200); // Limit length
       }
       
-      console.error(`[Tradier] Error ${response.status} on ${method} ${endpoint}:`, errorDetails);
-      throw new Error(`Tradier API error (${response.status}): ${errorDetails}`);
+      // Build comprehensive error message
+      let errorMessage = `Tradier API error (${response.status})`;
+      if (errorCode) {
+        errorMessage += ` [${errorCode}]`;
+      }
+      if (errorFields.length > 0) {
+        errorMessage += ` Fields: ${errorFields.join(', ')}`;
+      }
+      errorMessage += `: ${errorSummary}`;
+      
+      // Log full details for debugging
+      console.error(`[Tradier] Error ${response.status} on ${method} ${endpoint}`);
+      console.error(`[Tradier] Error Summary: ${errorSummary}`);
+      if (errorDetails !== errorSummary) {
+        console.error(`[Tradier] Full Error Details:\n${errorDetails}`);
+      }
+      if (options.body) {
+        try {
+          const bodyPreview = typeof options.body === 'string' 
+            ? options.body.substring(0, 500) 
+            : JSON.stringify(options.body).substring(0, 500);
+          console.error(`[Tradier] Request Body: ${bodyPreview}`);
+        } catch {
+          console.error(`[Tradier] Request Body: [unable to serialize]`);
+        }
+      }
+      
+      throw new Error(errorMessage);
     }
 
     const data = await response.json() as { [key: string]: unknown };
