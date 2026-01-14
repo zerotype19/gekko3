@@ -83,9 +83,14 @@ class MarketFeed:
         if current_dir.endswith('brain'):
             # Running from brain/ directory, write to parent (project root)
             self.state_file = os.path.join(os.path.dirname(current_dir), 'brain_state.json')
+            self.positions_file = os.path.join(os.path.dirname(current_dir), 'brain_positions.json')
         else:
             # Running from project root
             self.state_file = 'brain_state.json'
+            self.positions_file = 'brain_positions.json'
+        
+        # Load positions from disk on startup (survive restarts)
+        self._load_positions_from_disk()
     
     def export_state(self):
         """Dumps RICH brain state to JSON for the dashboard (Phase C: Step 3)"""
@@ -441,6 +446,7 @@ class MarketFeed:
         resp = await self.gatekeeper_client.send_proposal(proposal)
         if resp and resp.get('status') == 'APPROVED':
             del self.open_positions[trade_id]
+            self._save_positions_to_disk()  # Persist removal
             logging.info(f"✅ Closed {trade_id} | Remaining positions: {len(self.open_positions)}")
         elif resp and resp.get('status') == 'REJECTED':
             logging.error(f"❌ Close REJECTED for {trade_id}: {resp.get('reason', 'Unknown reason')}")
