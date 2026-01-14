@@ -79,7 +79,6 @@ class MarketFeed:
         # Dashboard state export (write to project root for Streamlit dashboard)
         # The dashboard runs from project root, so we need to write there
         # If running from brain/ directory, go up one level; otherwise use current dir
-        import os
         current_dir = os.getcwd()
         if current_dir.endswith('brain'):
             # Running from brain/ directory, write to parent (project root)
