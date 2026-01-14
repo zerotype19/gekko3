@@ -114,13 +114,19 @@ class MarketFeed:
                 logging.error(f"⚠️ Manager Error: {e}")
             await asyncio.sleep(5)  # Check every 5 seconds
 
-    async def _get_quotes(self, symbols: List[str]) -> Dict[str, float]:
-        """Fetch real-time quotes for option symbols"""
+    async def _get_quotes(self, symbols: List[str]) -> Dict[str, Dict]:
+        """
+        Fetch real-time quotes AND Greeks for option symbols.
+        Returns Dict: {symbol: {'price': float, 'delta': float, 'theta': float, 'vega': float}}
+        """
         if not symbols:
             return {}
+        
         headers = {'Authorization': f'Bearer {self.access_token}', 'Accept': 'application/json'}
         url = f'{TRADIER_API_BASE}/markets/quotes'
-        params = {'symbols': ','.join(symbols)}
+        # Request Greeks explicitly
+        params = {'symbols': ','.join(symbols), 'greeks': 'true'}
+        
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=headers, params=params) as resp:
@@ -129,20 +135,35 @@ class MarketFeed:
                         quotes = data.get('quotes', {}).get('quote', [])
                         if isinstance(quotes, dict):
                             quotes = [quotes]
-                        # Map symbol -> price (use mid or last)
+                        
                         result = {}
                         for q in quotes:
-                            symbol = q.get('symbol')
-                            if symbol:
-                                bid = float(q.get('bid', 0) or 0)
-                                ask = float(q.get('ask', 0) or 0)
-                                if bid > 0 and ask > 0:
-                                    result[symbol] = (bid + ask) / 2  # Mid price
-                                else:
-                                    result[symbol] = float(q.get('last', 0) or 0)
+                            sym = q.get('symbol')
+                            if not sym:
+                                continue
+                            
+                            # Price Logic (Mid or Last)
+                            bid = float(q.get('bid', 0) or 0)
+                            ask = float(q.get('ask', 0) or 0)
+                            if bid > 0 and ask > 0:
+                                price = (bid + ask) / 2
+                            else:
+                                price = float(q.get('last', 0) or 0)
+                                
+                            # Greeks Logic (Safely parse)
+                            greeks = q.get('greeks', {})
+                            if greeks is None:
+                                greeks = {}
+                            
+                            result[sym] = {
+                                'price': price,
+                                'delta': float(greeks.get('delta', 0) or 0),
+                                'theta': float(greeks.get('theta', 0) or 0),
+                                'vega': float(greeks.get('vega', 0) or 0)
+                            }
                         return result
         except Exception as e:
-            logging.error(f"⚠️ Quote fetch failed: {e}")
+            logging.error(f"⚠️ Quote/Greek fetch failed: {e}")
         return {}
 
     async def _manage_positions(self):
@@ -169,18 +190,40 @@ class MarketFeed:
         for trade_id, pos in list(self.open_positions.items()):
             symbol = pos['symbol']
             
-            # --- P&L CALCULATION ---
+            # --- P&L CALCULATION (Updated for Greeks) ---
             cost_to_close = 0.0
             missing_quote = False
+            
+            # Track Trade-Level Greeks
+            trade_delta = 0.0
+            trade_theta = 0.0
+            trade_vega = 0.0
+            
             for leg in pos['legs']:
-                price = quotes.get(leg['symbol'], 0)
-                if price == 0:
+                quote_data = quotes.get(leg['symbol'])  # Now a dict
+                if not quote_data:
                     missing_quote = True
+                    break
+                
+                price = quote_data['price']
+                qty = float(leg['quantity'])
+                
                 # To Close: Buy Short (+), Sell Long (-)
                 if leg['side'] == 'SELL':
-                    cost_to_close += price
+                    cost_to_close += price * qty
+                    # Short Option Greeks: Invert sign
+                    trade_delta -= quote_data['delta'] * 100 * qty  # 1 contract = 100 shares
+                    trade_theta -= quote_data['theta'] * 100 * qty
+                    trade_vega -= quote_data['vega'] * 100 * qty
                 else:
-                    cost_to_close -= price
+                    cost_to_close -= price * qty
+                    # Long Option Greeks: Keep sign
+                    trade_delta += quote_data['delta'] * 100 * qty
+                    trade_theta += quote_data['theta'] * 100 * qty
+                    trade_vega += quote_data['vega'] * 100 * qty
+            
+            # Store live greeks in position for debugging
+            pos['live_greeks'] = {'delta': trade_delta, 'theta': trade_theta, 'vega': trade_vega}
             
             if missing_quote or cost_to_close <= 0:
                 continue
@@ -291,6 +334,26 @@ class MarketFeed:
             if should_close:
                 logging.info(f"🛑 CLOSING {trade_id} | P&L: {pnl_pct:.1f}% | Reason: {reason}")
                 await self._execute_close(trade_id, pos, cost_to_close)
+        
+        # Log Portfolio Risk (after checking all positions)
+        self._log_portfolio_risk()
+
+    def _log_portfolio_risk(self):
+        """Log total portfolio exposure (The 'Risk Dashboard')"""
+        total_delta = 0.0
+        total_theta = 0.0
+        total_vega = 0.0
+        
+        count = 0
+        for pos in self.open_positions.values():
+            greeks = pos.get('live_greeks', {})
+            total_delta += greeks.get('delta', 0)
+            total_theta += greeks.get('theta', 0)
+            total_vega += greeks.get('vega', 0)
+            count += 1
+            
+        if count > 0:
+            logging.info(f"📊 PORTFOLIO RISK: Delta {total_delta:+.1f} | Theta {total_theta:+.1f} | Vega {total_vega:+.1f} | Positions: {count}")
 
     async def _execute_close(self, trade_id: str, pos: Dict, limit_price: float):
         """Send CLOSE order to Gatekeeper"""
@@ -1034,11 +1097,12 @@ class MarketFeed:
         
         net_price = 0.0
         for leg in legs:
-            price = quotes.get(leg['symbol'], 0.0)
-            if price == 0:
+            quote_data = quotes.get(leg['symbol'])
+            if not quote_data:
                 # Missing quote, skip this trade
                 logging.warning(f"⚠️ Missing quote for {leg['symbol']}, skipping complex proposal")
                 return
+            price = quote_data['price']
             if leg['side'] == 'SELL':
                 net_price += price * leg['quantity']
             else:
