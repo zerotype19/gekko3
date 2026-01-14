@@ -329,7 +329,9 @@ export class GatekeeperDO {
       };
     }
 
-    if (!CONSTITUTION.allowedStrategies.includes(proposal.strategy)) {
+    // Strategy validation: Only enforce for OPEN proposals
+    // CLOSE proposals can use any strategy (we're closing existing positions)
+    if (proposal.side === 'OPEN' && !CONSTITUTION.allowedStrategies.includes(proposal.strategy)) {
       return {
         status: 'REJECTED',
         rejectionReason: `Strategy not allowed: ${proposal.strategy}`,
