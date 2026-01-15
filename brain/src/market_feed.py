@@ -448,6 +448,8 @@ class MarketFeed:
                 # Periodic Full Sync: Every 10 minutes, sync with Tradier
                 # This ensures Brain's state matches broker reality
                 if (datetime.now() - last_sync).total_seconds() >= 600:  # 10 minutes
+                    # Sweep stale closing orders before sync to prevent rejection loops
+                    await self._sweep_stale_orders()
                     await self.sync_positions_with_tradier()
                     last_sync = datetime.now()
                     

@@ -1,6 +1,6 @@
 {
   "system": {
-    "timestamp": "2026-01-15T15:09:11.269970",
+    "timestamp": "2026-01-15T15:09:26.651495",
     "regime": "TRENDING",
     "portfolio_risk": {
       "delta": 0.0,
@@ -33,7 +33,7 @@
       "trend": "DOWNTREND",
       "flow": "NEUTRAL",
       "vix": 16.18,
-      "volume_velocity": 0.04480092644194001,
+      "volume_velocity": 0.15429716662706017,
       "active_signal": null,
       "poc": 694.7431147540984,
       "vah": 694.9450819672131,
@@ -50,7 +50,7 @@
       "trend": "DOWNTREND",
       "flow": "NEUTRAL",
       "vix": 16.18,
-      "volume_velocity": 0.0775247200010693,
+      "volume_velocity": 0.175407390347247,
       "active_signal": null,
       "poc": 625.427106918239,
       "vah": 626.7336477987421,
@@ -67,7 +67,7 @@
       "trend": "DOWNTREND",
       "flow": "NEUTRAL",
       "vix": 16.18,
-      "volume_velocity": 0.10373001776198934,
+      "volume_velocity": 0.19640205856902127,
       "active_signal": null,
       "poc": 266.4925,
       "vah": 266.84409090909094,
@@ -84,7 +84,7 @@
       "trend": "DOWNTREND",
       "flow": "NEUTRAL",
       "vix": 16.18,
-      "volume_velocity": 0.04080008976019747,
+      "volume_velocity": 0.1902304185069207,
       "active_signal": null,
       "poc": 495.42777777777775,
       "vah": 495.62888888888887,
