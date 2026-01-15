@@ -119,6 +119,36 @@ class BrainSupervisor:
                 
             should_run, reason = self.is_market_hours()
             
+            # Send heartbeat every minute with rich state (ALWAYS, even when market is closed)
+            # This ensures dashboards stay updated with last known state
+            now_ts = datetime.now(self.tz).timestamp()
+            if now_ts - self.last_heartbeat_time >= 60:  # Every 60 seconds
+                try:
+                    # 1. Generate Full Export (System + Market Data)
+                    # We use the method we built for the local dashboard!
+                    full_state = self.market_feed.export_state()  # Returns {'system': ..., 'market': ...}
+                    
+                    # 2. Construct Payload (flatten slightly for the Gatekeeper)
+                    brain_state = {
+                        'regime': full_state.get('system', {}).get('regime', 'UNKNOWN'),
+                        'greeks': full_state.get('system', {}).get('portfolio_risk', {}),
+                        'iv_rank_spy': self.alpha_engine.get_iv_rank('SPY'),
+                        'market': full_state.get('market', {})  # <--- THE NEW DATA (Full Asset Surveillance)
+                    }
+                    
+                    # Send to Gatekeeper
+                    await self.gatekeeper.send_heartbeat(brain_state)
+                    self.last_heartbeat_time = now_ts
+                    logging.debug("💓 Heartbeat sent with RICH MARKET DATA")
+                except Exception as e:
+                    # Fallback to simple heartbeat if state collection fails
+                    try:
+                        await self.gatekeeper.send_heartbeat()
+                        self.last_heartbeat_time = now_ts
+                    except:
+                        pass
+                    logging.debug(f"Heartbeat failed (non-critical): {e}")
+            
             if should_run:
                 # Market is open - ensure feed is running
                 # Check shutdown flag before starting feed
@@ -148,35 +178,6 @@ class BrainSupervisor:
                         if self.running:  # Only restart if still running
                             logging.error(f"❌ Feed crashed: {e}. Restarting...")
                             self.feed_task = asyncio.create_task(self.market_feed.connect())
-                
-                # Send heartbeat every minute with rich state (Phase C: Final Polish - Remote Command Center)
-                now_ts = datetime.now(self.tz).timestamp()
-                if now_ts - self.last_heartbeat_time >= 60:  # Every 60 seconds
-                    try:
-                        # 1. Generate Full Export (System + Market Data)
-                        # We use the method we built for the local dashboard!
-                        full_state = self.market_feed.export_state()  # Returns {'system': ..., 'market': ...}
-                        
-                        # 2. Construct Payload (flatten slightly for the Gatekeeper)
-                        brain_state = {
-                            'regime': full_state.get('system', {}).get('regime', 'UNKNOWN'),
-                            'greeks': full_state.get('system', {}).get('portfolio_risk', {}),
-                            'iv_rank_spy': self.alpha_engine.get_iv_rank('SPY'),
-                            'market': full_state.get('market', {})  # <--- THE NEW DATA (Full Asset Surveillance)
-                        }
-                        
-                        # Send to Gatekeeper
-                        await self.gatekeeper.send_heartbeat(brain_state)
-                        self.last_heartbeat_time = now_ts
-                        logging.debug("💓 Heartbeat sent with RICH MARKET DATA")
-                    except Exception as e:
-                        # Fallback to simple heartbeat if state collection fails
-                        try:
-                            await self.gatekeeper.send_heartbeat()
-                            self.last_heartbeat_time = now_ts
-                        except:
-                            pass
-                        logging.debug(f"Heartbeat failed (non-critical): {e}")
                 
                 # Pulse check every minute during market hours (with shutdown checks)
                 if not self.running:
