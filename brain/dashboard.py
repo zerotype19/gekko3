@@ -215,7 +215,12 @@ for symbol, metrics in market_data.items():
                 }
             ))
             fig_rsi.update_layout(height=200, margin=dict(l=20,r=20,t=30,b=20))
-            st.plotly_chart(fig_rsi, width='stretch', key=f"rsi_gauge_{symbol}", config={})
+            # Use config parameter to suppress Plotly deprecation warnings
+            plotly_config = {
+                'displayModeBar': False,
+                'staticPlot': False
+            }
+            st.plotly_chart(fig_rsi, use_container_width=True, key=f"rsi_gauge_{symbol}", config=plotly_config)
 
         with g2:
             # IV Rank Bar
