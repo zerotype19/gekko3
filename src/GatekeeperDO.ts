@@ -682,12 +682,13 @@ export class GatekeeperDO {
           }
 
           // Order Type Logic
-          // For OPEN orders: Use 'credit' or 'debit' based on net premium
-          // For CLOSE orders: Use 'limit' to avoid buying power issues (Tradier calculates gross margin for debit/credit)
-          // Closing existing positions should use limit orders, not debit/credit types
+          // For OPEN orders: Use 'credit' (premium selling strategies)
+          // For CLOSE orders: Use 'market' to avoid buying power issues
+          // Tradier doesn't accept 'limit' for multileg orders - must use 'credit', 'debit', 'even', or 'market'
+          // Using 'market' for closing avoids margin calculation issues
           const orderType = proposal.side === 'OPEN' 
             ? 'credit'  // Opening: assume credit spreads (premium selling)
-            : 'limit';  // Closing: use limit to avoid buying power calculation issues
+            : 'market'; // Closing: use market to avoid buying power calculation issues
 
           orderResult = await this.tradierClient.placeOrder({
             class: 'multileg',
