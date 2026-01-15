@@ -121,16 +121,22 @@ class MarketFeed:
                 serializable = {}
                 for k, v in self.open_positions.items():
                     serializable[k] = v.copy()
-                    if isinstance(v.get('timestamp'), datetime):
-                        serializable[k]['timestamp'] = v['timestamp'].isoformat()
-                    # Also save closing metadata
-                    if isinstance(v.get('closing_timestamp'), datetime):
-                        serializable[k]['closing_timestamp'] = v['closing_timestamp'].isoformat()
-                    if isinstance(v.get('opening_timestamp'), datetime):
-                        serializable[k]['opening_timestamp'] = v['opening_timestamp'].isoformat()
+                    # Convert ALL datetime objects to ISO strings (handles any field name)
+                    for field_name, field_value in serializable[k].items():
+                        if isinstance(field_value, datetime):
+                            serializable[k][field_name] = field_value.isoformat()
+                    # Also handle nested datetime objects (if any)
+                    # Check legs for any datetime fields (shouldn't have any, but just in case)
+                    if 'legs' in serializable[k]:
+                        for leg in serializable[k]['legs']:
+                            for leg_field, leg_value in leg.items():
+                                if isinstance(leg_value, datetime):
+                                    leg[leg_field] = leg_value.isoformat()
                 json.dump(serializable, f, indent=2)
         except Exception as e:
             logging.error(f"Failed to save positions: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _load_positions_from_disk(self):
         """Load positions from disk on startup"""
