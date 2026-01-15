@@ -1,5 +1,5 @@
 {
-  "DIA_CREDIT_SPREAD_RECOVERED_1768509139": {
+  "DIA_CREDIT_SPREAD_RECOVERED_1768511006": {
     "symbol": "DIA",
     "strategy": "CREDIT_SPREAD",
     "legs": [
@@ -22,17 +22,16 @@
     ],
     "entry_price": 6.22,
     "bias": "bullish",
-    "timestamp": "2026-01-15T15:32:19.813160",
-    "highest_pnl": 95.7395498392283,
+    "timestamp": "2026-01-15T16:03:26.186257",
+    "highest_pnl": 94.77491961414792,
     "status": "CLOSING",
     "live_greeks": {
       "delta": -1.270542613503121,
       "theta": -12.410817149773427,
       "vega": 10.28640886072295
     },
-    "close_limit_price": 0.38499999999999995,
-    "cancel_attempt_time": "2026-01-15T15:50:46.790573",
-    "close_order_id": "24400635",
-    "closing_timestamp": "2026-01-15T15:53:34.815849"
+    "close_order_id": "24401306",
+    "close_limit_price": 0.37500000000000017,
+    "closing_timestamp": "2026-01-15T16:03:39.212332"
   }
 }
