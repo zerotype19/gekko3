@@ -989,14 +989,14 @@ export class GatekeeperDO {
   }
 
   /**
-   * Generate and send End-of-Day P&L Report to Discord
+   * Generate and send End-of-Day P&L Report (Discord + Email)
    */
   async generateEndOfDayReport(): Promise<void> {
     try {
       await this.initializeState();
       await this.syncAccountState(); // Ensure fresh data
 
-      // 1. Calculate P&L
+      // 1. Calculate Overall P&L
       const balances = await this.tradierClient.getBalances();
       const currentEquity = balances.total_equity;
       
@@ -1020,40 +1020,72 @@ export class GatekeeperDO {
       const dayPnLDollars = currentEquity - startOfDayEquity;
       const dayPnLPercent = startOfDayEquity > 0 ? (dayPnLDollars / startOfDayEquity) * 100 : 0;
 
-      // 2. Fetch Detailed Trade Log
+      // 2. Fetch Today's Activity
       const todayStartSeconds = Math.floor(todayStartMs / 1000);
       
-      // Get Counts
-      const stats = await this.env.DB.prepare(
-        'SELECT status, COUNT(*) as count FROM proposals WHERE timestamp >= ? GROUP BY status'
-      ).bind(todayStartSeconds).all<{ status: string; count: number }>();
-      
-      const approved = stats.results?.find(r => r.status === 'APPROVED')?.count ?? 0;
-      const rejected = stats.results?.find(r => r.status === 'REJECTED')?.count ?? 0;
-
-      // Get Full List
-      const logs = await this.env.DB.prepare(
-        `SELECT timestamp, symbol, strategy, side, status, rejection_reason 
-         FROM proposals WHERE timestamp >= ? ORDER BY timestamp ASC`
+      // Proposals Summary by Symbol
+      const proposalsBySymbol = await this.env.DB.prepare(
+        `SELECT symbol, 
+                COUNT(*) as total,
+                SUM(CASE WHEN status = 'APPROVED' THEN 1 ELSE 0 END) as approved,
+                SUM(CASE WHEN status = 'REJECTED' THEN 1 ELSE 0 END) as rejected,
+                SUM(CASE WHEN side = 'OPEN' AND status = 'APPROVED' THEN 1 ELSE 0 END) as entries,
+                SUM(CASE WHEN side = 'CLOSE' AND status = 'APPROVED' THEN 1 ELSE 0 END) as exits
+         FROM proposals 
+         WHERE timestamp >= ? 
+         GROUP BY symbol 
+         ORDER BY symbol`
       ).bind(todayStartSeconds).all<any>();
 
-      let logText = "No activity.";
-      if (logs.results && logs.results.length > 0) {
-        logText = logs.results.map(p => {
-          const date = new Date(p.timestamp * 1000);
-          const time = `${date.getUTCHours()-5}:${date.getUTCMinutes().toString().padStart(2,'0')}`; // Approx ET
-          const icon = p.status === 'APPROVED' ? '✅' : '❌';
-          const reason = p.status === 'REJECTED' ? ` (${p.rejection_reason})` : '';
-          return `${icon} ${time} **${p.symbol}** ${p.side}${reason}`;
-        }).join('\n');
-        
-        // Discord limit check
-        if (logText.length > 1000) logText = logText.substring(0, 950) + '\n... (truncated)';
+      // Overall Stats
+      const overallStats = await this.env.DB.prepare(
+        `SELECT 
+                COUNT(*) as total_proposals,
+                SUM(CASE WHEN status = 'APPROVED' THEN 1 ELSE 0 END) as approved,
+                SUM(CASE WHEN status = 'REJECTED' THEN 1 ELSE 0 END) as rejected,
+                SUM(CASE WHEN side = 'OPEN' AND status = 'APPROVED' THEN 1 ELSE 0 END) as total_entries,
+                SUM(CASE WHEN side = 'CLOSE' AND status = 'APPROVED' THEN 1 ELSE 0 END) as total_exits
+         FROM proposals 
+         WHERE timestamp >= ?`
+      ).bind(todayStartSeconds).first<any>();
+
+      // Current Open Positions by Symbol
+      const positionsBySymbol = await this.env.DB.prepare(
+        `SELECT symbol, 
+                COUNT(*) as position_count,
+                SUM(ABS(quantity)) as total_quantity
+         FROM positions 
+         WHERE quantity != 0 
+         GROUP BY symbol 
+         ORDER BY symbol`
+      ).all<any>();
+
+      // Build Summary Text
+      const symbolSummaries: string[] = [];
+      if (proposalsBySymbol.results && proposalsBySymbol.results.length > 0) {
+        for (const row of proposalsBySymbol.results) {
+          const symbol = row.symbol;
+          const entries = row.entries || 0;
+          const exits = row.exits || 0;
+          const approved = row.approved || 0;
+          const rejected = row.rejected || 0;
+          
+          // Get position count for this symbol
+          const posRow = positionsBySymbol.results?.find((p: any) => p.symbol === symbol);
+          const openPositions = posRow?.position_count || 0;
+          
+          symbolSummaries.push(
+            `**${symbol}**: ${entries} entries, ${exits} exits, ${openPositions} open | ${approved}✓/${rejected}✗`
+          );
+        }
+      } else {
+        symbolSummaries.push('No activity today.');
       }
 
-      // 3. Send Report
+      // 3. Send Discord Report
       const color = dayPnLDollars >= 0 ? 0x22c55e : 0xef4444;
       const pnlSign = dayPnLDollars >= 0 ? '+' : '';
+      const pnlEmoji = dayPnLDollars >= 0 ? '📈' : '📉';
 
       if (this.env.DISCORD_WEBHOOK_URL) {
         await fetch(this.env.DISCORD_WEBHOOK_URL, {
@@ -1061,22 +1093,207 @@ export class GatekeeperDO {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             embeds: [{
-              title: '📅 Gekko3 Daily Report',
+              title: `${pnlEmoji} Gekko3 Daily Report`,
               color: color,
               fields: [
+                { name: 'Overall P&L', value: `${pnlSign}$${dayPnLDollars.toFixed(2)} (${pnlSign}${dayPnLPercent.toFixed(2)}%)`, inline: true },
                 { name: 'Equity', value: `$${currentEquity.toFixed(2)}`, inline: true },
-                { name: 'Day P&L', value: `${pnlSign}$${dayPnLDollars.toFixed(2)} (${dayPnLPercent.toFixed(2)}%)`, inline: true },
-                { name: 'Stats', value: `${approved} Approved / ${rejected} Rejected`, inline: true },
-                { name: 'Trade Log', value: logText, inline: false }
+                { name: 'Start Equity', value: `$${startOfDayEquity.toFixed(2)}`, inline: true },
+                { name: 'Activity Summary', value: `${overallStats?.total_entries || 0} entries | ${overallStats?.total_exits || 0} exits | ${overallStats?.approved || 0} approved | ${overallStats?.rejected || 0} rejected`, inline: false },
+                { name: 'By Symbol', value: symbolSummaries.join('\n') || 'No activity', inline: false }
               ],
               timestamp: new Date().toISOString()
             }]
           })
         });
-        console.log('✅ EOD Report Sent');
+        console.log('✅ EOD Discord Report Sent');
+      }
+
+      // 4. Send Email Report
+      if (this.env.RESEND_API_KEY) {
+        await this.sendEmailReport({
+          dayPnLDollars,
+          dayPnLPercent,
+          currentEquity,
+          startOfDayEquity,
+          overallStats: overallStats || {},
+          symbolSummaries,
+          positionsBySymbol: positionsBySymbol.results || []
+        });
+        console.log('✅ EOD Email Report Sent');
       }
     } catch (e) {
       console.error('EOD Report Error:', e);
+    }
+  }
+
+  /**
+   * Send email report via Resend API
+   */
+  private async sendEmailReport(data: {
+    dayPnLDollars: number;
+    dayPnLPercent: number;
+    currentEquity: number;
+    startOfDayEquity: number;
+    overallStats: any;
+    symbolSummaries: string[];
+    positionsBySymbol: any[];
+  }): Promise<void> {
+    const { dayPnLDollars, dayPnLPercent, currentEquity, startOfDayEquity, overallStats, symbolSummaries, positionsBySymbol } = data;
+    const pnlSign = dayPnLDollars >= 0 ? '+' : '';
+    const pnlColor = dayPnLDollars >= 0 ? '#22c55e' : '#ef4444';
+    const dateStr = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: #0f172a; color: white; padding: 20px; border-radius: 8px 8px 0 0; }
+    .content { background: #f8f9fa; padding: 20px; border-radius: 0 0 8px 8px; }
+    .metric { background: white; padding: 15px; margin: 10px 0; border-radius: 6px; border-left: 4px solid #3b82f6; }
+    .metric-label { font-size: 0.85rem; color: #666; text-transform: uppercase; margin-bottom: 5px; }
+    .metric-value { font-size: 1.5rem; font-weight: bold; }
+    .pnl-positive { color: #22c55e; }
+    .pnl-negative { color: #ef4444; }
+    .summary-table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+    .summary-table th, .summary-table td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
+    .summary-table th { background: #f1f5f9; font-weight: 600; }
+    .footer { text-align: center; margin-top: 20px; color: #666; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1 style="margin: 0;">📊 Gekko3 Daily Report</h1>
+      <p style="margin: 5px 0 0 0; opacity: 0.9;">${dateStr}</p>
+    </div>
+    <div class="content">
+      <div class="metric">
+        <div class="metric-label">Overall P&L</div>
+        <div class="metric-value" style="color: ${pnlColor};">
+          ${pnlSign}$${dayPnLDollars.toFixed(2)} (${pnlSign}${dayPnLPercent.toFixed(2)}%)
+        </div>
+      </div>
+
+      <div class="metric">
+        <div class="metric-label">Account Equity</div>
+        <div class="metric-value">$${currentEquity.toFixed(2)}</div>
+        <div style="font-size: 0.9rem; color: #666; margin-top: 5px;">
+          Start of Day: $${startOfDayEquity.toFixed(2)}
+        </div>
+      </div>
+
+      <div class="metric">
+        <div class="metric-label">Activity Summary</div>
+        <table class="summary-table">
+          <tr>
+            <th>Metric</th>
+            <th>Count</th>
+          </tr>
+          <tr>
+            <td>Total Entries</td>
+            <td><strong>${overallStats.total_entries || 0}</strong></td>
+          </tr>
+          <tr>
+            <td>Total Exits</td>
+            <td><strong>${overallStats.total_exits || 0}</strong></td>
+          </tr>
+          <tr>
+            <td>Approved Proposals</td>
+            <td><strong>${overallStats.approved || 0}</strong></td>
+          </tr>
+          <tr>
+            <td>Rejected Proposals</td>
+            <td><strong>${overallStats.rejected || 0}</strong></td>
+          </tr>
+        </table>
+      </div>
+
+      <div class="metric">
+        <div class="metric-label">By Symbol</div>
+        ${symbolSummaries.length > 0 
+          ? symbolSummaries.map(s => `<div style="padding: 8px 0; border-bottom: 1px solid #eee;">${s.replace(/\*\*/g, '<strong>').replace(/\*\*/g, '</strong>').replace(/✓/g, '✅').replace(/✗/g, '❌')}</div>`).join('')
+          : '<div>No activity today.</div>'
+        }
+      </div>
+
+      ${positionsBySymbol.length > 0 ? `
+      <div class="metric">
+        <div class="metric-label">Current Open Positions</div>
+        <table class="summary-table">
+          <tr>
+            <th>Symbol</th>
+            <th>Position Count</th>
+            <th>Total Quantity</th>
+          </tr>
+          ${positionsBySymbol.map((p: any) => `
+            <tr>
+              <td><strong>${p.symbol}</strong></td>
+              <td>${p.position_count}</td>
+              <td>${p.total_quantity}</td>
+            </tr>
+          `).join('')}
+        </table>
+      </div>
+      ` : ''}
+
+      <div class="footer">
+        <p>Automated report from Gekko3 Trading System</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+    `;
+
+    const text = `
+Gekko3 Daily Report - ${dateStr}
+
+Overall P&L: ${pnlSign}$${dayPnLDollars.toFixed(2)} (${pnlSign}${dayPnLPercent.toFixed(2)}%)
+Account Equity: $${currentEquity.toFixed(2)} (Start: $${startOfDayEquity.toFixed(2)})
+
+Activity Summary:
+- Total Entries: ${overallStats.total_entries || 0}
+- Total Exits: ${overallStats.total_exits || 0}
+- Approved: ${overallStats.approved || 0}
+- Rejected: ${overallStats.rejected || 0}
+
+By Symbol:
+${symbolSummaries.map(s => s.replace(/\*\*/g, '').replace(/✓/g, '✓').replace(/✗/g, '✗')).join('\n') || 'No activity today.'}
+
+${positionsBySymbol.length > 0 ? `\nCurrent Open Positions:\n${positionsBySymbol.map((p: any) => `${p.symbol}: ${p.position_count} positions, ${p.total_quantity} total quantity`).join('\n')}` : ''}
+
+---
+Automated report from Gekko3 Trading System
+    `;
+
+    try {
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.env.RESEND_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: this.env.RESEND_FROM_EMAIL || 'Gekko3 <onboarding@resend.dev>',
+          to: ['kevin.mcgovern@gmail.com'],
+          subject: `Gekko3 Daily Report - ${dateStr} - ${pnlSign}$${dayPnLDollars.toFixed(2)} (${pnlSign}${dayPnLPercent.toFixed(2)}%)`,
+          html: html,
+          text: text,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        console.error('Resend API error:', error);
+        throw new Error(`Failed to send email: ${response.status}`);
+      }
+    } catch (e) {
+      console.error('Email send error:', e);
+      throw e;
     }
   }
 
