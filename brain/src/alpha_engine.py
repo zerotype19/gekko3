@@ -514,6 +514,9 @@ class AlphaEngine:
         trend, sma = self.get_trend(symbol)
         rsi = self.get_rsi(symbol)
         vix = self.get_vix()
+        
+        # Volume Profile (Auction Market Theory)
+        volume_profile = self.get_volume_profile(symbol)
 
         return {
             'symbol': symbol,
@@ -526,7 +529,10 @@ class AlphaEngine:
             'volume_velocity': flow_metadata['volume_velocity'],
             'sma_200': sma,  # None if < 200 candles
             'candle_count': flow_metadata['candle_count'],
-            'is_warm': sma is not None and vix is not None  # Warmup status
+            'is_warm': sma is not None and vix is not None,  # Warmup status
+            'poc': volume_profile['poc'],  # Point of Control (highest volume price)
+            'vah': volume_profile['vah'],  # Value Area High
+            'val': volume_profile['val']   # Value Area Low
         }
 
     def _load_iv_history(self):
@@ -580,3 +586,126 @@ class AlphaEngine:
         
         rank = ((current - low) / (high - low)) * 100
         return max(0.0, min(100.0, rank))
+
+    def get_volume_profile(self, symbol: str, bucket_size: float = 0.05) -> Dict:
+        """
+        Calculate Volume Profile (Auction Market Theory)
+        
+        Distributes candle volume across price buckets to create a volume histogram.
+        Calculates POC (Point of Control) and Value Area (70% volume range).
+        
+        Args:
+            symbol: Symbol to analyze
+            bucket_size: Price bucket size in dollars (default $0.05 for SPY/QQQ)
+        
+        Returns:
+            Dict with:
+                'poc': float - Point of Control (highest volume price)
+                'vah': float - Value Area High (70% volume upper bound)
+                'val': float - Value Area Low (70% volume lower bound)
+                'total_volume': int - Total volume analyzed
+        """
+        if self.candles[symbol].empty:
+            return {
+                'poc': 0.0,
+                'vah': 0.0,
+                'val': 0.0,
+                'total_volume': 0
+            }
+        
+        # Get recent candles (use lookback_minutes or all available)
+        df = self.candles[symbol].tail(self.lookback_minutes).copy()
+        
+        if df.empty:
+            return {
+                'poc': 0.0,
+                'vah': 0.0,
+                'val': 0.0,
+                'total_volume': 0
+            }
+        
+        # Find price range
+        min_price = df['low'].min()
+        max_price = df['high'].max()
+        
+        if min_price == max_price or min_price <= 0:
+            return {
+                'poc': 0.0,
+                'vah': 0.0,
+                'val': 0.0,
+                'total_volume': 0
+            }
+        
+        # Create price buckets
+        num_buckets = int((max_price - min_price) / bucket_size) + 1
+        bucket_prices = np.linspace(min_price, max_price, num_buckets)
+        volume_histogram = np.zeros(num_buckets)
+        
+        # Distribute volume from each candle across its price range
+        total_volume = 0
+        for _, row in df.iterrows():
+            candle_low = float(row['low'])
+            candle_high = float(row['high'])
+            candle_volume = float(row['volume'])
+            
+            if candle_volume <= 0 or candle_high <= candle_low:
+                continue
+            
+            total_volume += candle_volume
+            
+            # Find buckets that this candle overlaps
+            low_idx = max(0, int((candle_low - min_price) / bucket_size))
+            high_idx = min(num_buckets - 1, int((candle_high - min_price) / bucket_size))
+            
+            if low_idx > high_idx:
+                continue
+            
+            # Distribute volume evenly across overlapping buckets
+            # (Assumes uniform distribution within candle's high-low range)
+            num_overlapping = high_idx - low_idx + 1
+            if num_overlapping > 0:
+                volume_per_bucket = candle_volume / num_overlapping
+                volume_histogram[low_idx:high_idx + 1] += volume_per_bucket
+        
+        if total_volume == 0:
+            return {
+                'poc': 0.0,
+                'vah': 0.0,
+                'val': 0.0,
+                'total_volume': 0
+            }
+        
+        # Find POC (Point of Control) - highest volume bucket
+        poc_idx = np.argmax(volume_histogram)
+        poc = float(bucket_prices[poc_idx])
+        
+        # Calculate Value Area (70% of total volume)
+        # Sort buckets by volume (descending) and accumulate until we hit 70%
+        sorted_indices = np.argsort(volume_histogram)[::-1]
+        target_volume = total_volume * 0.70
+        accumulated_volume = 0.0
+        
+        value_area_indices = []
+        for idx in sorted_indices:
+            if accumulated_volume >= target_volume:
+                break
+            accumulated_volume += volume_histogram[idx]
+            value_area_indices.append(idx)
+        
+        if value_area_indices:
+            value_area_indices = np.array(value_area_indices)
+            vah_idx = np.max(value_area_indices)
+            val_idx = np.min(value_area_indices)
+            vah = float(bucket_prices[vah_idx])
+            val = float(bucket_prices[val_idx])
+        else:
+            # Fallback: use POC ± 1 bucket
+            vah = poc + bucket_size
+            val = poc - bucket_size
+        
+        return {
+            'poc': poc,
+            'vah': vah,
+            'val': val,
+            'total_volume': int(total_volume)
+        }

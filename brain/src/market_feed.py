@@ -1276,14 +1276,22 @@ class MarketFeed:
         if not signal and current_regime.value == 'LOW_VOL_CHOP' and current_hour == 13 and 0 <= current_minute < 5:
             adx = self.alpha_engine.get_adx(symbol)
             if adx is not None and adx < 20:  # Low Trend
-                logging.info(f"🚜 FARMING: {symbol} ADX {adx:.1f}. Opening Iron Condor.")
-                # FIX: Use 'CREDIT_SPREAD' so Gatekeeper accepts the order
-                # Leg 1: Bear Call Spread
-                await self._send_proposal(symbol, 'CREDIT_SPREAD', 'OPEN', 'CALL', indicators, 'neutral')
-                # Leg 2: Bull Put Spread
-                await self._send_proposal(symbol, 'CREDIT_SPREAD', 'OPEN', 'PUT', indicators, 'neutral')
-                self.last_proposal_time[symbol] = now
-                return
+                # Volume Profile Filter: Only enter if price is near POC (within $2 for SPY/QQQ)
+                # In chop, price acts like a rubber band around POC. If too far, avoid.
+                poc = indicators.get('poc', 0)
+                current_price = indicators['price']
+                
+                if poc > 0 and abs(current_price - poc) < 2.00:
+                    logging.info(f"🚜 FARMING: {symbol} ADX {adx:.1f}. Price ${current_price:.2f} near POC ${poc:.2f}. Opening Iron Condor.")
+                    # FIX: Use 'CREDIT_SPREAD' so Gatekeeper accepts the order
+                    # Leg 1: Bear Call Spread
+                    await self._send_proposal(symbol, 'CREDIT_SPREAD', 'OPEN', 'CALL', indicators, 'neutral')
+                    # Leg 2: Bull Put Spread
+                    await self._send_proposal(symbol, 'CREDIT_SPREAD', 'OPEN', 'PUT', indicators, 'neutral')
+                    self.last_proposal_time[symbol] = now
+                    return
+                elif poc > 0:
+                    logging.debug(f"🔍 Vol Profile: Price ${current_price:.2f} vs POC ${poc:.2f} (Distance: ${abs(current_price - poc):.2f}) - Too far from value node, skipping Iron Condor")
 
         # -----------------------------------------------
         # STRATEGY 3: SCALPER (0DTE)
@@ -1365,18 +1373,33 @@ class MarketFeed:
             rsi = indicators['rsi']
             flow = indicators['flow_state']
             
+            # Volume Profile Filter (Auction Market Theory)
+            # For trend strategies, confirm price is above/below POC relative to trend direction
+            poc = indicators.get('poc', 0)
+            current_price = indicators['price']
+            
             if trend == 'UPTREND' and rsi < 30 and flow != 'NEUTRAL':
-                signal = 'BULL_PUT_SPREAD'
-                strategy = 'CREDIT_SPREAD'
-                side = 'OPEN'
-                option_type = 'PUT'
-                bias = 'bullish'
+                # Bullish: Only take if price is above POC (buyers in control, value migrating up)
+                if poc > 0 and current_price > poc:
+                    signal = 'BULL_PUT_SPREAD'
+                    strategy = 'CREDIT_SPREAD'
+                    side = 'OPEN'
+                    option_type = 'PUT'
+                    bias = 'bullish'
+                    logging.info(f"🔍 Vol Profile: Price ${current_price:.2f} vs POC ${poc:.2f} (Above) - Trend confirmed")
+                elif poc > 0:
+                    logging.debug(f"🔍 Vol Profile: Price ${current_price:.2f} vs POC ${poc:.2f} (Below) - Rejecting bullish signal (not above value)")
             elif trend == 'DOWNTREND' and rsi > 70 and flow != 'NEUTRAL':
-                signal = 'BEAR_CALL_SPREAD'
-                strategy = 'CREDIT_SPREAD'
-                side = 'OPEN'
-                option_type = 'CALL'
-                bias = 'bearish'
+                # Bearish: Only take if price is below POC (sellers in control, value migrating down)
+                if poc > 0 and current_price < poc:
+                    signal = 'BEAR_CALL_SPREAD'
+                    strategy = 'CREDIT_SPREAD'
+                    side = 'OPEN'
+                    option_type = 'CALL'
+                    bias = 'bearish'
+                    logging.info(f"🔍 Vol Profile: Price ${current_price:.2f} vs POC ${poc:.2f} (Below) - Trend confirmed")
+                elif poc > 0:
+                    logging.debug(f"🔍 Vol Profile: Price ${current_price:.2f} vs POC ${poc:.2f} (Above) - Rejecting bearish signal (not below value)")
 
         # Get IV Rank for complex strategies
         iv_rank = self.alpha_engine.get_iv_rank(symbol)
@@ -1389,18 +1412,26 @@ class MarketFeed:
             # Only enter at lunchtime (12:00 - 13:00) when things settle
             if current_hour == 12:
                 if iv_rank > 50:  # Premium is expensive -> Sell it
-                    logging.info(f"🦋 BUTTERFLY: {symbol} High IV ({iv_rank:.0f}) in Chop. Targeting Pin.")
+                    # Volume Profile Filter: Only enter if price is near POC (within $2 for SPY/QQQ)
+                    # Iron Butterfly should be centered on the value node (POC)
+                    poc = indicators.get('poc', 0)
+                    current_price = indicators['price']
                     
-                    # Manual Proposal Construction for Complex Strategy
-                    exp = await self._get_best_expiration(symbol)
-                    if exp:
-                        chain = await self._get_option_chain(symbol, exp)
-                        if chain:
-                            legs = await self._find_iron_butterfly_legs(chain, indicators['price'], exp)
-                            if legs:
-                                await self._send_complex_proposal(symbol, 'IRON_BUTTERFLY', 'OPEN', legs, indicators, 'neutral')
-                                self.last_proposal_time[symbol] = now
-                                return
+                    if poc > 0 and abs(current_price - poc) < 2.00:
+                        logging.info(f"🦋 BUTTERFLY: {symbol} High IV ({iv_rank:.0f}) in Chop. Price ${current_price:.2f} near POC ${poc:.2f}. Targeting Pin.")
+                        
+                        # Manual Proposal Construction for Complex Strategy
+                        exp = await self._get_best_expiration(symbol)
+                        if exp:
+                            chain = await self._get_option_chain(symbol, exp)
+                            if chain:
+                                legs = await self._find_iron_butterfly_legs(chain, indicators['price'], exp)
+                                if legs:
+                                    await self._send_complex_proposal(symbol, 'IRON_BUTTERFLY', 'OPEN', legs, indicators, 'neutral')
+                                    self.last_proposal_time[symbol] = now
+                                    return
+                    elif poc > 0:
+                        logging.debug(f"🔍 Vol Profile: Price ${current_price:.2f} vs POC ${poc:.2f} (Distance: ${abs(current_price - poc):.2f}) - Too far from value node, skipping Iron Butterfly")
 
         # -----------------------------------------------
         # STRATEGY 6: RATIO SPREAD ("The Hedge")
