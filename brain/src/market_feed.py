@@ -589,8 +589,11 @@ class MarketFeed:
                 order_id = pos.get('close_order_id')
                 if not order_id:
                     # Weird state, reset to OPEN
+                    logging.warning(f"⚠️ Position {trade_id} is CLOSING but has no close_order_id. Resetting to OPEN.")
                     pos['status'] = 'OPEN'
                     continue
+                
+                logging.debug(f"🔍 Checking order status for {trade_id} (Order ID: {order_id})")
                 
                 # Check if we're waiting for cancellation to complete
                 if pos.get('cancelling'):
@@ -629,6 +632,7 @@ class MarketFeed:
                     continue
                 
                 order_status = await self._get_order_status(order_id)
+                logging.debug(f"🔍 Order {order_id} status check returned: {order_status}")
                 
                 # Handle API failure - check if order still exists in Tradier
                 if order_status is None:
@@ -674,7 +678,7 @@ class MarketFeed:
                     self._save_positions_to_disk()
                     continue
                 
-                elif status == 'pending' or status == 'open' or status == 'partially_filled':
+                elif order_status == 'pending' or order_status == 'open' or order_status == 'partially_filled':
                     # Smart Order Chasing: Check if price moved away
                     # If price moved > 10 cents from order limit price, cancel and retry immediately
                     order_limit_price = pos.get('close_limit_price')
