@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 from src.alpha_engine import AlphaEngine
 from src.gatekeeper_client import GatekeeperClient
 from src.notifier import get_notifier
+from src.position_sizer import PositionSizer
 
 # Load environment variables
 load_dotenv()
@@ -91,6 +92,9 @@ class MarketFeed:
         
         # Portfolio Greeks
         self.portfolio_greeks = {'delta': 0.0, 'theta': 0.0, 'vega': 0.0}
+        
+        # Position Sizing (Professional Grade)
+        self.position_sizer = PositionSizer()
         
         # Dashboard state export
         current_dir = os.getcwd()
@@ -229,6 +233,38 @@ class MarketFeed:
         except Exception as e:
             logging.error(f"Failed to fetch account ID: {e}")
         return None
+
+    async def _get_account_equity(self) -> float:
+        """
+        Fetch account equity from Tradier (SANDBOX account where orders execute).
+        Returns total_equity or fallback to $100,000 if API fails.
+        """
+        if not self.account_id:
+            await self._fetch_account_id()
+        if not self.account_id:
+            logging.warning("⚠️ Account ID not available. Using fallback equity: $100,000")
+            return 100000.0  # Safe fallback for sizing calculations
+        
+        sandbox_api_base = "https://sandbox.tradier.com/v1"
+        headers = {'Authorization': f'Bearer {self.sandbox_token}', 'Accept': 'application/json'}
+        url = f"{sandbox_api_base}/accounts/{self.account_id}/balances"
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        balances = data.get('balances', {})
+                        total_equity = balances.get('total_equity', 0)
+                        if total_equity and total_equity > 0:
+                            return float(total_equity)
+                        else:
+                            logging.warning(f"⚠️ Equity data unavailable. Using fallback: $100,000")
+                            return 100000.0
+        except Exception as e:
+            logging.error(f"Failed to fetch equity: {e}. Using fallback: $100,000")
+        
+        return 100000.0  # Safe fallback so we don't crash
 
     async def _get_order_status(self, order_id: str) -> Optional[str]:
         """Check status of a specific order (uses SANDBOX API where orders are executed)"""
@@ -1744,12 +1780,28 @@ class MarketFeed:
         velocity = indicators.get('volume_velocity', 1.0)
         imbalance_score = min(10, max(0, (velocity - 1.0) * 5))
 
-        # 6. Proposal
+        # 6. Position Sizing (Professional Grade)
+        # Calculate spread width (max loss per contract)
+        short_strike = float(short_leg['strike'])
+        long_strike = float(long_leg['strike'])
+        spread_width = abs(short_strike - long_strike)
+        
+        # Fetch equity and calculate quantity
+        equity = await self._get_account_equity()
+        qty = self.position_sizer.calculate_size(equity, spread_width)
+        
+        # Log sizing decision
+        risk_amount = equity * 0.02  # 2% risk
+        max_loss_per_contract = spread_width * 100
+        logging.info(f"⚖️ SIZING: Equity ${equity:,.0f} | Risk 2% (${risk_amount:,.0f}) | "
+                    f"Width ${spread_width:.2f} (Max Loss ${max_loss_per_contract:.0f}/contract) -> Qty {qty}")
+
+        # 7. Proposal
         proposal = {
             'symbol': symbol,
             'strategy': strategy,
             'side': side,
-            'quantity': 1,
+            'quantity': qty,  # Dynamic quantity based on risk
             'price': round(limit_price, 2),
             'legs': [
                 {
@@ -1757,7 +1809,7 @@ class MarketFeed:
                     'expiration': exp_str,
                     'strike': float(short_leg['strike']),
                     'type': option_type,
-                    'quantity': 1,
+                    'quantity': qty,  # Dynamic quantity
                     'side': 'SELL'
                 },
                 {
@@ -1765,7 +1817,7 @@ class MarketFeed:
                     'expiration': exp_str,
                     'strike': float(long_leg['strike']),
                     'type': option_type,
-                    'quantity': 1,
+                    'quantity': qty,  # Dynamic quantity
                     'side': 'BUY'
                 }
             ],
@@ -1832,6 +1884,81 @@ class MarketFeed:
         # Ratio Spread might be small debit.
         limit_price = abs(net_price)  # Gatekeeper expects positive limit price
         
+        # Position Sizing (Professional Grade) - Complex Trades
+        # Calculate spread width based on strategy
+        spread_width = 0.0
+        call_width = 0.0
+        put_width = 0.0
+        
+        if strategy == 'IRON_CONDOR':
+            # Iron Condor: Use the larger wing width (call wing or put wing)
+            # Group legs by type
+            call_legs = [l for l in legs if l['type'] == 'CALL']
+            put_legs = [l for l in legs if l['type'] == 'PUT']
+            
+            if call_legs and len(call_legs) >= 2:
+                # Calculate call wing width
+                call_strikes = sorted([l['strike'] for l in call_legs])
+                call_width = abs(call_strikes[-1] - call_strikes[0])
+            
+            if put_legs and len(put_legs) >= 2:
+                # Calculate put wing width
+                put_strikes = sorted([l['strike'] for l in put_legs])
+                put_width = abs(put_strikes[-1] - put_strikes[0])
+            
+            # Use the larger width (worst case max loss)
+            spread_width = max(call_width, put_width) if (call_width > 0 or put_width > 0) else 5.0
+        
+        elif strategy == 'IRON_BUTTERFLY':
+            # Iron Butterfly: Wing width (distance from center to wing)
+            strikes = sorted(set([l['strike'] for l in legs]))
+            if len(strikes) >= 3:
+                # Center strike is typically the middle one
+                center = strikes[len(strikes) // 2]
+                # Wing width is distance from center to outer wing
+                spread_width = abs(strikes[-1] - strikes[0])
+            else:
+                # Fallback: use max spread between any two strikes
+                spread_width = abs(max(strikes) - min(strikes))
+        
+        elif strategy == 'RATIO_SPREAD':
+            # Ratio Spread: Width is the distance between the short and long strikes
+            strikes = sorted(set([l['strike'] for l in legs]))
+            if len(strikes) >= 2:
+                spread_width = abs(strikes[-1] - strikes[0])
+            else:
+                spread_width = 5.0  # Default fallback
+        
+        else:
+            # Unknown strategy, use default
+            spread_width = 5.0
+            logging.warning(f"⚠️ Unknown strategy {strategy} for sizing, using default width: $5")
+        
+        # Fetch equity and calculate quantity
+        equity = await self._get_account_equity()
+        qty = self.position_sizer.calculate_size(equity, spread_width)
+        
+        # Log sizing decision
+        risk_amount = equity * 0.02  # 2% risk
+        max_loss_per_contract = spread_width * 100
+        logging.info(f"⚖️ SIZING ({strategy}): Equity ${equity:,.0f} | Risk 2% (${risk_amount:,.0f}) | "
+                    f"Width ${spread_width:.2f} (Max Loss ${max_loss_per_contract:.0f}/contract) -> Qty {qty}")
+        
+        # Update leg quantities to match calculated quantity
+        # For ratio spreads, preserve the ratio (e.g., 1:2), so multiply base quantity
+        updated_legs = []
+        for leg in legs:
+            updated_leg = leg.copy()
+            # For ratio spreads, preserve the ratio
+            if strategy == 'RATIO_SPREAD':
+                # Keep the ratio intact (e.g., 1:2 becomes qty:qty*2)
+                # The original leg quantity already has the ratio (1 or 2)
+                updated_leg['quantity'] = leg['quantity'] * qty
+            else:
+                # Standard multi-leg: all legs get same quantity
+                updated_leg['quantity'] = qty
+            updated_legs.append(updated_leg)
+        
         # Construct Context
         context = {
             'vix': indicators.get('vix', 0),
@@ -1844,9 +1971,9 @@ class MarketFeed:
             'symbol': symbol,
             'strategy': strategy,
             'side': side,
-            'quantity': 1,
+            'quantity': qty,  # Dynamic quantity based on risk
             'price': round(limit_price, 2),
-            'legs': legs,
+            'legs': updated_legs,  # Updated with dynamic quantities
             'context': context
         }
         
@@ -1864,7 +1991,7 @@ class MarketFeed:
                     'status': 'OPENING',  # WAIT FOR FILL!
                     'open_order_id': str(order_id),
                     'opening_timestamp': datetime.now(),
-                    'legs': legs,
+                    'legs': updated_legs,  # Use updated legs with dynamic quantities
                     'entry_price': round(limit_price, 2),
                     'bias': bias,
                     'timestamp': datetime.now(),
