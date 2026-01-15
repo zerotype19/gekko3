@@ -1178,6 +1178,115 @@ class MarketFeed:
             self._save_positions_to_disk()
             logging.info("💾 Updated positions saved to disk")
 
+    async def _sweep_stale_orders(self):
+        """
+        Order Sweep: Cancel any stale pending CLOSING orders for tracked positions.
+        
+        CRITICAL: Only cancels CLOSING orders (buy_to_close/sell_to_close), NOT opening orders.
+        This prevents the Brain from trying to close positions that already have pending
+        closing orders in Tradier, which would immediately reject and cause retry loops.
+        
+        Opening orders are allowed to remain pending - we want them to fill.
+        Only closing orders are swept to allow fresh exit logic to run.
+        """
+        if not self.account_id:
+            await self._fetch_account_id()
+        if not self.account_id:
+            return
+        
+        # Get symbols we're tracking (from open_positions)
+        tracked_symbols = set()
+        for pos in self.open_positions.values():
+            symbol = pos.get('symbol', '')
+            if symbol:
+                tracked_symbols.add(symbol)
+        
+        if not tracked_symbols:
+            logging.debug("🧹 No tracked positions, skipping order sweep")
+            return
+        
+        # Fetch all open/pending orders from Tradier
+        sandbox_api_base = "https://sandbox.tradier.com/v1"
+        headers = {'Authorization': f'Bearer {self.sandbox_token}', 'Accept': 'application/json'}
+        url = f"{sandbox_api_base}/accounts/{self.account_id}/orders"
+        params = {'status': 'open,pending'}  # Fetch open and pending orders
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, params=params) as resp:
+                    if resp.status != 200:
+                        logging.warning(f"⚠️ Order sweep failed: HTTP {resp.status}")
+                        return
+                    
+                    data = await resp.json()
+                    orders = data.get('orders', {}).get('order', [])
+                    if orders == 'null' or not orders:
+                        orders = []
+                    
+                    order_list = orders if isinstance(orders, list) else [orders]
+                    
+                    # Find CLOSING orders for tracked symbols (NOT opening orders)
+                    cancelled_count = 0
+                    for order in order_list:
+                        order_id = order.get('id')
+                        order_status = order.get('status', '').lower()
+                        
+                        # CRITICAL: Only process closing orders, ignore opening orders
+                        is_closing = False
+                        order_symbol = None
+                        
+                        # For multileg orders, check if any leg is a closing order
+                        legs = order.get('leg', [])
+                        if legs:
+                            leg_list = legs if isinstance(legs, list) else [legs]
+                            for leg in leg_list:
+                                side = leg.get('side', '').lower()
+                                option_symbol = leg.get('option_symbol', '')
+                                
+                                # Extract underlying symbol from option symbol (e.g., "SPY260213P00663000" -> "SPY")
+                                if option_symbol:
+                                    match = re.match(r'^([A-Z]+)', option_symbol)
+                                    if match:
+                                        order_symbol = match.group(1)
+                                
+                                # ONLY cancel if it's a closing order (buy_to_close or sell_to_close)
+                                if side in ['buy_to_close', 'sell_to_close']:
+                                    is_closing = True
+                                    break
+                        else:
+                            # Single leg order
+                            side = order.get('side', '').lower()
+                            option_symbol = order.get('option_symbol', '')
+                            
+                            if option_symbol:
+                                match = re.match(r'^([A-Z]+)', option_symbol)
+                                if match:
+                                    order_symbol = match.group(1)
+                            
+                            # ONLY cancel if it's a closing order
+                            if side in ['buy_to_close', 'sell_to_close']:
+                                is_closing = True
+                        
+                        # Only cancel closing orders for tracked symbols
+                        if is_closing and order_symbol and order_symbol in tracked_symbols:
+                            if order_status in ['open', 'pending']:
+                                logging.info(f"🧹 Sweep: Cancelling stale CLOSE order {order_id} for {order_symbol}")
+                                cancel_success = await self._cancel_order(str(order_id))
+                                if cancel_success:
+                                    cancelled_count += 1
+                                else:
+                                    logging.warning(f"⚠️ Failed to cancel stale order {order_id}")
+                    
+                    if cancelled_count > 0:
+                        logging.info(f"✅ Order Sweep: Cancelled {cancelled_count} stale closing order(s)")
+                    else:
+                        logging.debug("🧹 Order Sweep: No stale closing orders found")
+                        
+        except Exception as e:
+            logging.error(f"❌ Order sweep error: {e}")
+            import traceback
+            traceback.print_exc()
+
     async def reconcile_state(self):
         """Startup Reconciliation (Adopt Orphans from Tradier)
         Fetches all open positions from Tradier and reconciles with Brain's state:
