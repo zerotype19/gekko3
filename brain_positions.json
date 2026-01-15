@@ -1,5 +1,5 @@
 {
-  "DIA_CREDIT_SPREAD_RECOVERED_1768505802": {
+  "DIA_CREDIT_SPREAD_RECOVERED_1768506673": {
     "symbol": "DIA",
     "strategy": "CREDIT_SPREAD",
     "legs": [
@@ -22,99 +22,16 @@
     ],
     "entry_price": 6.22,
     "bias": "bullish",
-    "timestamp": "2026-01-15T14:36:42.725935",
-    "highest_pnl": 96.06109324758843,
+    "timestamp": "2026-01-15T14:51:13.645921",
+    "highest_pnl": 95.98070739549838,
     "status": "CLOSING",
     "live_greeks": {
       "delta": 6.497097930673613,
       "theta": -5.792485695507281,
       "vega": -2.4751227761258363
     },
-    "close_order_id": "24392700",
-    "close_limit_price": 0.2950000000000001,
-    "closing_timestamp": "2026-01-15T14:36:54.839398"
-  },
-  "IWM_MANUAL_RECOVERY_RECOVERED_1768505802": {
-    "symbol": "IWM",
-    "strategy": "MANUAL_RECOVERY",
-    "legs": [
-      {
-        "symbol": "IWM260213C00262000",
-        "expiration": "2026-02-13",
-        "strike": 262.0,
-        "type": "CALL",
-        "quantity": 1,
-        "side": "SELL"
-      },
-      {
-        "symbol": "IWM260213C00272000",
-        "expiration": "2026-02-13",
-        "strike": 272.0,
-        "type": "CALL",
-        "quantity": 1,
-        "side": "BUY"
-      },
-      {
-        "symbol": "IWM260213P00247000",
-        "expiration": "2026-02-13",
-        "strike": 247.0,
-        "type": "PUT",
-        "quantity": 4,
-        "side": "BUY"
-      },
-      {
-        "symbol": "IWM260213P00251000",
-        "expiration": "2026-02-13",
-        "strike": 251.0,
-        "type": "PUT",
-        "quantity": 4,
-        "side": "BUY"
-      },
-      {
-        "symbol": "IWM260213P00252000",
-        "expiration": "2026-02-13",
-        "strike": 252.0,
-        "type": "PUT",
-        "quantity": 1,
-        "side": "BUY"
-      },
-      {
-        "symbol": "IWM260213P00256000",
-        "expiration": "2026-02-13",
-        "strike": 256.0,
-        "type": "PUT",
-        "quantity": 2,
-        "side": "SELL"
-      },
-      {
-        "symbol": "IWM260213P00260000",
-        "expiration": "2026-02-13",
-        "strike": 260.0,
-        "type": "PUT",
-        "quantity": 2,
-        "side": "SELL"
-      },
-      {
-        "symbol": "IWM260213P00262000",
-        "expiration": "2026-02-13",
-        "strike": 262.0,
-        "type": "PUT",
-        "quantity": 7,
-        "side": "SELL"
-      }
-    ],
-    "entry_price": 72.98,
-    "bias": "neutral",
-    "timestamp": "2026-01-15T14:36:42.725993",
-    "highest_pnl": 59.084680734447794,
-    "status": "CLOSING",
-    "live_greeks": {
-      "delta": 189.97009925512782,
-      "theta": 39.53663901588105,
-      "vega": -143.73612672031385
-    },
-    "close_order_id": "24392703",
-    "close_limit_price": 29.91,
-    "closing_timestamp": "2026-01-15T14:36:56.074253"
+    "close_order_id": "24394127",
+    "close_limit_price": 0.3,
+    "closing_timestamp": "2026-01-15T14:51:25.329556"
   }
 }

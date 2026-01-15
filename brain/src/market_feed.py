@@ -1183,6 +1183,7 @@ class MarketFeed:
         Fetches all open positions from Tradier and reconciles with Brain's state:
         - Adopts positions that exist in Tradier but not in Brain (orphans)
         - Removes positions that exist in Brain but not in Tradier (ghosts)
+        - CRITICAL: Cancels stale pending closing orders to prevent rejection loops
         """
         logging.info("🕵️ STARTUP RECONCILIATION: Fetching positions from Tradier...")
         
@@ -1191,6 +1192,9 @@ class MarketFeed:
         if not self.account_id:
             logging.warning("⚠️ Cannot reconcile: Account ID not available")
             return
+        
+        # STEP 1: Pending Order Sweep (Cancel stale closing orders)
+        await self._sweep_stale_orders()
         
         try:
             # Fetch all positions from Tradier
