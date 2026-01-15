@@ -593,7 +593,7 @@ class MarketFeed:
                     pos['status'] = 'OPEN'
                     continue
                 
-                logging.debug(f"🔍 Checking order status for {trade_id} (Order ID: {order_id})")
+                logging.info(f"🔍 Checking order status for {trade_id} (Order ID: {order_id})")
                 
                 # Check if we're waiting for cancellation to complete
                 if pos.get('cancelling'):
@@ -632,7 +632,7 @@ class MarketFeed:
                     continue
                 
                 order_status = await self._get_order_status(order_id)
-                logging.debug(f"🔍 Order {order_id} status check returned: {order_status}")
+                logging.info(f"🔍 Order {order_id} status check returned: {order_status}")
                 
                 # Handle API failure - check if order still exists in Tradier
                 if order_status is None:
