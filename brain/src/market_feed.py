@@ -188,7 +188,8 @@ class MarketFeed:
             'regime': regime,
             'portfolio_risk': self.portfolio_greeks,
             # Count truly active positions (OPEN or CLOSING, exclude OPENING positions waiting for fill)
-            'open_positions': sum(1 for p in self.open_positions.values() if p.get('status') in ['OPEN', 'CLOSING', None]),
+            # Include positions with no status (recovered positions default to OPEN)
+            'open_positions': sum(1 for p in self.open_positions.values() if p.get('status') in ['OPEN', 'CLOSING'] or p.get('status') is None),
             'total_positions': len(self.open_positions),  # Total including OPENING
             'positions': serialized_positions,  # Full position details for dashboard
             'status': 'CONNECTED' if self.is_connected else 'DISCONNECTED'
