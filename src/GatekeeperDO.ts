@@ -784,10 +784,27 @@ export class GatekeeperDO {
         );
       } catch (executionError) {
         console.error('Order execution failed:', executionError);
+        
+        // Log detailed error information for debugging
+        const errorMessage = executionError instanceof Error ? executionError.message : 'Unknown error';
+        console.error(`[Gatekeeper] Execution Error Details:`);
+        console.error(`  Proposal: ${proposal.symbol} ${proposal.strategy} ${proposal.side}`);
+        console.error(`  Legs: ${proposal.legs.length}`);
+        console.error(`  Error: ${errorMessage}`);
+        
+        // Check if error mentions 'buy_to_cover' or similar stock order types
+        if (errorMessage.toLowerCase().includes('buy_to_cover') || 
+            errorMessage.toLowerCase().includes('cover')) {
+          console.error(`[Gatekeeper] CRITICAL: Detected stock order type error for option order!`);
+          console.error(`  This suggests Tradier is misinterpreting the order or receiving wrong side values.`);
+          console.error(`  Expected sides: buy_to_open, sell_to_open, buy_to_close, sell_to_close`);
+          console.error(`  Actual sides sent: ${sides.join(', ')}`);
+        }
+        
         return new Response(
           JSON.stringify({
             status: 'APPROVED_BUT_EXECUTION_FAILED',
-            error: executionError instanceof Error ? executionError.message : 'Unknown error',
+            error: errorMessage,
           }),
           {
             status: 500,
