@@ -164,15 +164,35 @@ class MarketFeed:
             pass
 
         # Serialize positions for dashboard (exclude datetime objects)
+        # CRITICAL: For MANUAL_RECOVERY positions, always read entry_price from disk
+        # to ensure we have the latest corrected value
+        disk_positions = {}
+        if os.path.exists(self.positions_file):
+            try:
+                with open(self.positions_file, 'r') as f:
+                    disk_positions = json.load(f)
+            except:
+                pass
+        
         serialized_positions = []
         for trade_id, pos in self.open_positions.items():
             # Include all positions (OPEN, OPENING, CLOSING, or no status for recovered)
+            # For MANUAL_RECOVERY, use disk value if available (more up-to-date)
+            entry_price = pos.get('entry_price', 0)
+            if pos.get('strategy') == 'MANUAL_RECOVERY' and trade_id in disk_positions:
+                disk_entry = disk_positions[trade_id].get('entry_price', 0)
+                if disk_entry > 0 and abs(disk_entry - entry_price) > 0.01:
+                    # Disk has different value, use it and update in-memory
+                    entry_price = disk_entry
+                    pos['entry_price'] = entry_price
+                    logging.debug(f"📝 Using disk entry_price for {trade_id}: ${entry_price:.2f}")
+            
             serialized = {
                 'trade_id': trade_id,
                 'symbol': pos.get('symbol', 'UNKNOWN'),
                 'strategy': pos.get('strategy', 'UNKNOWN'),
                 'status': pos.get('status', 'OPEN'),  # Default to OPEN if missing (recovered positions)
-                'entry_price': pos.get('entry_price', 0),
+                'entry_price': entry_price,
                 'bias': pos.get('bias', 'neutral'),
                 'legs_count': len(pos.get('legs', [])),
                 'timestamp': pos.get('timestamp', '').isoformat() if isinstance(pos.get('timestamp'), datetime) else pos.get('timestamp', ''),
