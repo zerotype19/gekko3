@@ -112,6 +112,8 @@ class MarketFeed:
                     # Also save closing metadata
                     if isinstance(v.get('closing_timestamp'), datetime):
                         serializable[k]['closing_timestamp'] = v['closing_timestamp'].isoformat()
+                    if isinstance(v.get('opening_timestamp'), datetime):
+                        serializable[k]['opening_timestamp'] = v['opening_timestamp'].isoformat()
                 json.dump(serializable, f, indent=2)
         except Exception as e:
             logging.error(f"Failed to save positions: {e}")
@@ -408,7 +410,6 @@ class MarketFeed:
 
             # --- 2. VERIFY EXIT (Close & Verify) ---
             if status == 'CLOSING':
-            if pos.get('status') == 'CLOSING':
                 order_id = pos.get('close_order_id')
                 if not order_id:
                     # Weird state, reset to OPEN
@@ -632,14 +633,16 @@ class MarketFeed:
         total_vega = 0.0
         count = 0
         for pos in self.open_positions.values():
-            greeks = pos.get('live_greeks', {})
-            total_delta += greeks.get('delta', 0)
-            total_theta += greeks.get('theta', 0)
-            total_vega += greeks.get('vega', 0)
-            count += 1
+            # Only count truly open positions (exclude OPENING/CLOSING)
+            if pos.get('status') == 'OPEN':
+                greeks = pos.get('live_greeks', {})
+                total_delta += greeks.get('delta', 0)
+                total_theta += greeks.get('theta', 0)
+                total_vega += greeks.get('vega', 0)
+                count += 1
         self.portfolio_greeks = {'delta': total_delta, 'theta': total_theta, 'vega': total_vega}
         if count > 0:
-            logging.debug(f"📊 PORTFOLIO RISK: Delta {total_delta:+.1f} | Theta {total_theta:+.1f} | Vega {total_vega:+.1f}")
+            logging.debug(f"📊 PORTFOLIO RISK: Delta {total_delta:+.1f} | Theta {total_theta:+.1f} | Vega {total_vega:+.1f} | Positions: {count}")
 
     async def _get_actual_positions(self) -> Dict[str, Dict]:
         """Fetch actual current positions from Tradier to verify quantities/sides"""
