@@ -280,16 +280,13 @@ async def main():
     brain = None
     
     try:
-        # Auto-sync positions from Tradier before starting the Brain
-        try:
-            logging.info("🔄 Syncing positions from Tradier...")
-            from recover_positions import run_recovery
-            run_recovery()
-            logging.info("✅ Position sync complete")
-        except Exception as e:
-            logging.warning(f"⚠️ Position sync failed (will use disk cache): {e}")
-            # Continue anyway - brain will load from disk if available
-        
+        # Initialize BrainSupervisor
+        # Note: MarketFeed.reconcile_state() handles startup sync:
+        # - Order sweep (cancels stale closing orders)
+        # - Position sync (adopts orphans from Tradier)
+        # - Removes ghosts (positions that no longer exist)
+        # This runs automatically when MarketFeed connects, ensuring order sweep
+        # happens BEFORE any new logic, preventing "Duplicate Order" rejections.
         brain = BrainSupervisor()
         
         # Handle Ctrl+C - use event to trigger async shutdown
