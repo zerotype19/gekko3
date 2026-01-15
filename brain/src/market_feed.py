@@ -2961,18 +2961,22 @@ class MarketFeed:
         # CRITICAL FIX: Recalculate net_price with updated quantities
         # The original net_price was calculated with base quantities (qty=1)
         # Now that we've scaled to actual qty, we need to recalculate the total
-        net_price_updated = 0.0
+        net_price_total = 0.0
         for leg in updated_legs:
             quote_data = quotes.get(leg['symbol'])
             if quote_data:
                 price = quote_data['price']
                 if leg['side'] == 'SELL':
-                    net_price_updated += price * leg['quantity']
+                    net_price_total += price * leg['quantity']
                 else:
-                    net_price_updated -= price * leg['quantity']
+                    net_price_total -= price * leg['quantity']
         
-        # Use the updated net_price (scaled to actual quantity)
-        limit_price = abs(net_price_updated)  # Gatekeeper expects positive limit price
+        # CRITICAL: Normalize to Per-Unit Price (Gatekeeper/Tradier expects price per strategy unit)
+        # Without normalization: net_price_total = $5.00 (total for 5 contracts)
+        #                     Would send: price=$5.00 → Asking for $5.00 PER UNIT (wrong!)
+        # With normalization: limit_price = $5.00 / 5 = $1.00 → Correct per-unit price
+        # Note: For Ratio Spreads, qty is the 'base' unit, so this logic holds
+        limit_price = abs(net_price_total) / qty if qty > 0 else 0.0
         
         # Construct Context
         context = {
