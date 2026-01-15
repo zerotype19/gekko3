@@ -9,7 +9,7 @@ import pandas as pd
 import json
 import time
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import plotly.graph_objects as go
 
 # Page configuration
@@ -27,6 +27,7 @@ st.markdown("""
     .sub-header { font-size: 1.2rem; font-weight: bold; opacity: 0.8; margin-top: 1rem; }
     .metric-container { background-color: #1e293b; padding: 15px; border-radius: 10px; color: white; }
     .regime-tag { padding: 5px 10px; border-radius: 5px; font-weight: bold; color: white; }
+    .stale-warning { color: #ff4b4b; font-weight: bold; border: 1px solid #ff4b4b; padding: 10px; border-radius: 5px; text-align: center; margin-bottom: 10px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -59,14 +60,12 @@ try:
             with open(state_file, 'r') as f:
                 content = f.read().strip()
                 if not content:
-                    # File is empty, wait and retry
                     time.sleep(0.1)
                     continue
                 raw_data = json.loads(content)
                 break
         except json.JSONDecodeError as e:
             if attempt < 2:
-                # Wait a bit and retry (file might be mid-write)
                 time.sleep(0.1)
                 continue
             else:
@@ -77,28 +76,28 @@ try:
         time.sleep(2)
         st.rerun()
         
-except FileNotFoundError:
-    st.warning("⚠️ Waiting for Brain heartbeat...")
-    time.sleep(2)
-    st.rerun()
-except json.JSONDecodeError as e:
-    st.error(f"⚠️ Invalid JSON in state file: {e}")
-    st.info("The Brain might be writing the file. Retrying...")
-    time.sleep(2)
-    st.rerun()
 except Exception as e:
     st.error(f"⚠️ Error reading state: {e}")
-    st.info("Retrying in 2 seconds...")
     time.sleep(2)
     st.rerun()
 
-# Handle New "Rich" Structure vs Old "Flat" Structure
+# Handle New "Rich" Structure
 if 'system' in raw_data and 'market' in raw_data:
     system_data = raw_data['system']
     market_data = raw_data['market']
 else:
-    st.error("❌ Incompatible Data Format. Please restart brain/main.py to generate new state.")
+    st.error("❌ Incompatible Data Format. Please restart brain/main.py.")
     st.stop()
+
+# --- FRESHNESS CHECK ---
+last_update_str = system_data.get('timestamp')
+try:
+    last_update = datetime.fromisoformat(last_update_str)
+    seconds_ago = (datetime.now() - last_update).total_seconds()
+    if seconds_ago > 60:
+        st.markdown(f'<div class="stale-warning">⚠️ DATA STALE: Last update {int(seconds_ago)}s ago. Is Brain running?</div>', unsafe_allow_html=True)
+except:
+    pass
 
 # --- SECTION 1: MISSION CONTROL (System Wide) ---
 st.markdown("### 🛡️ Portfolio & Risk")
@@ -109,13 +108,13 @@ sys_col1, sys_col2, sys_col3, sys_col4 = st.columns(4)
 with sys_col1:
     regime = system_data.get('regime', 'UNKNOWN')
     regime_color = "gray"
-    if regime == 'LOW_VOL_CHOP': regime_color = "blue"
-    elif regime == 'TRENDING': regime_color = "green"
-    elif regime == 'HIGH_VOL_EXPANSION': regime_color = "orange"
-    elif regime == 'EVENT_RISK': regime_color = "red"
+    if regime == 'LOW_VOL_CHOP': regime_color = "#3b82f6" # Blue
+    elif regime == 'TRENDING': regime_color = "#22c55e"    # Green
+    elif regime == 'HIGH_VOL_EXPANSION': regime_color = "#f97316" # Orange
+    elif regime == 'EVENT_RISK': regime_color = "#ef4444"  # Red
     
     st.markdown(f"**Market Regime**")
-    st.markdown(f"<div style='background-color:{regime_color};' class='regime-tag'>{regime}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='background-color:{regime_color}; text-align:center;' class='regime-tag'>{regime}</div>", unsafe_allow_html=True)
 
 with sys_col2:
     risk = system_data.get('portfolio_risk', {})
@@ -138,7 +137,6 @@ positions_list = system_data.get('positions', [])
 if positions_list:
     st.markdown("### 📊 Active Positions")
     
-    # Create DataFrame for better display
     pos_data = []
     for pos in positions_list:
         pos_data.append({
@@ -148,21 +146,12 @@ if positions_list:
             'Entry Price': f"${pos.get('entry_price', 0):.2f}",
             'Legs': pos.get('legs_count', 0),
             'Bias': pos.get('bias', 'neutral'),
-            'Trade ID': pos.get('trade_id', '')[:20] + '...' if len(pos.get('trade_id', '')) > 20 else pos.get('trade_id', '')
+            'Trade ID': pos.get('trade_id', '')[:15] + '...'
         })
     
     if pos_data:
         df = pd.DataFrame(pos_data)
-        st.dataframe(df, width='stretch', hide_index=True)
-        
-        # Show order IDs if present
-        for pos in positions_list:
-            if 'open_order_id' in pos or 'close_order_id' in pos:
-                with st.expander(f"Order Details: {pos.get('symbol')} {pos.get('strategy')}"):
-                    if 'open_order_id' in pos:
-                        st.text(f"Open Order ID: {pos['open_order_id']}")
-                    if 'close_order_id' in pos:
-                        st.text(f"Close Order ID: {pos['close_order_id']}")
+        st.dataframe(df, width=1200, hide_index=True)
 else:
     st.info("📭 No active positions tracked by Brain")
 
@@ -172,27 +161,38 @@ st.markdown("---")
 st.markdown("### 📊 Asset Surveillance")
 
 for symbol, metrics in market_data.items():
-    with st.expander(f"{symbol} - ${metrics.get('price', 0):.2f} ({metrics.get('trend', 'FLAT')})", expanded=True):
+    # Warm-up Check
+    is_warm = metrics.get('is_warm', False)
+    candle_count = metrics.get('candle_count', 0)
+    
+    header_text = f"{symbol} - ${metrics.get('price', 0):.2f} ({metrics.get('trend', 'FLAT')})"
+    if not is_warm:
+        header_text += f" [❄️ WARMING UP: {candle_count}/200]"
+        
+    with st.expander(header_text, expanded=True):
         
         # Row 1: Key Signals
         m1, m2, m3, m4 = st.columns(4)
         
         with m1:
             iv_rank = metrics.get('iv_rank', 0)
-            st.metric("IV Rank", f"{iv_rank:.0f}%", delta="Expensive" if iv_rank > 50 else "Cheap", delta_color="inverse")
+            st.metric("IV Rank", f"{iv_rank:.0f}%", delta="High" if iv_rank > 50 else "Low")
             
         with m2:
             rsi = metrics.get('rsi', 50)
-            st.metric("RSI (2)", f"{rsi:.1f}")
+            st.metric("RSI (14)", f"{rsi:.1f}")
             
         with m3:
-            adx = metrics.get('adx', 0)
-            st.metric("ADX (Trend)", f"{adx:.1f}")
+            # Volume Profile POC distance
+            poc = metrics.get('poc', 0)
+            price = metrics.get('price', 0)
+            dist_pct = ((price - poc) / poc) * 100 if poc > 0 else 0
+            st.metric("Dist to POC", f"{dist_pct:+.2f}%", help=f"POC: ${poc:.2f}")
             
         with m4:
             signal = metrics.get('active_signal')
             if signal:
-                st.warning(f"🚨 SIGNAL: {signal}")
+                st.warning(f"🚨 {signal}")
             else:
                 st.info("Scanning...")
 
@@ -204,34 +204,55 @@ for symbol, metrics in market_data.items():
             fig_rsi = go.Figure(go.Indicator(
                 mode = "gauge+number",
                 value = rsi,
-                title = {'text': f"{symbol} RSI Heatmap"},
+                title = {'text': "RSI Heatmap"},
                 gauge = {
                     'axis': {'range': [0, 100]},
                     'bar': {'color': "white"},
                     'steps': [
-                        {'range': [0, 10], 'color': "green"},
-                        {'range': [10, 90], 'color': "gray"},
-                        {'range': [90, 100], 'color': "red"}],
+                        {'range': [0, 30], 'color': "green"},
+                        {'range': [30, 70], 'color': "gray"},
+                        {'range': [70, 100], 'color': "red"}],
+                    'threshold': {'line': {'color': "blue", 'width': 4}, 'thickness': 0.75, 'value': rsi}
                 }
             ))
-            fig_rsi.update_layout(height=200, margin=dict(l=20,r=20,t=30,b=20))
-            # Use config parameter to suppress Plotly deprecation warnings
-            plotly_config = {
-                'displayModeBar': False,
-                'staticPlot': False
-            }
-            st.plotly_chart(fig_rsi, use_container_width=True, key=f"rsi_gauge_{symbol}", config=plotly_config)
+            fig_rsi.update_layout(height=180, margin=dict(l=20,r=20,t=30,b=20))
+            st.plotly_chart(fig_rsi, use_container_width=True, key=f"rsi_{symbol}", config={'displayModeBar': False})
 
         with g2:
-            # IV Rank Bar
-            st.markdown(f"**Volatility Context (IV Rank: {iv_rank:.0f})**")
-            st.progress(int(min(iv_rank, 100)))
-            if iv_rank < 20:
-                st.caption("Environment: BUY PREMIUM (Long Spreads / Calendars)")
-            elif iv_rank > 50:
-                st.caption("Environment: SELL PREMIUM (Iron Condors / Credit Spreads)")
+            # Market Structure (Price vs POC/Value Area)
+            poc = metrics.get('poc', 0)
+            vah = metrics.get('vah', 0)
+            val = metrics.get('val', 0)
+            price = metrics.get('price', 0)
+            
+            if poc > 0:
+                # Normalize range for display
+                range_min = min(val, price) * 0.995
+                range_max = max(vah, price) * 1.005
+                
+                fig_struct = go.Figure()
+                
+                # Value Area Rect
+                fig_struct.add_shape(type="rect",
+                    x0=val, y0=0, x1=vah, y1=1,
+                    fillcolor="rgba(0,0,255,0.1)", line=dict(width=0),
+                )
+                
+                # Lines
+                fig_struct.add_trace(go.Scatter(x=[poc, poc], y=[0, 1], mode="lines", name="POC", line=dict(color="blue", width=3, dash="dash")))
+                fig_struct.add_trace(go.Scatter(x=[price, price], y=[0, 1], mode="lines", name="Price", line=dict(color="green", width=4)))
+                
+                fig_struct.update_layout(
+                    title="Market Structure (Auction Theory)",
+                    height=180,
+                    margin=dict(l=20,r=20,t=30,b=20),
+                    xaxis=dict(range=[range_min, range_max], title="Price"),
+                    yaxis=dict(showticklabels=False, range=[0, 1]),
+                    showlegend=True
+                )
+                st.plotly_chart(fig_struct, use_container_width=True, key=f"struct_{symbol}", config={'displayModeBar': False})
             else:
-                st.caption("Environment: NEUTRAL")
+                st.info("Building Volume Profile...")
 
 # Footer
 if auto_refresh:
