@@ -716,15 +716,32 @@ export class GatekeeperDO {
           .run();
 
         // ALERT: Send Trade Execution Notification
+        const alertFields: any[] = [
+          { name: 'Action', value: `${proposal.side} (Limit $${proposal.price})`, inline: true },
+          { name: 'Quantity', value: proposal.quantity.toString(), inline: true },
+          { name: 'Order ID', value: `${orderResult.order_id}`, inline: false }
+        ];
+        
+        // Add Market Structure context if POC is available
+        const poc = proposal.context?.poc;
+        if (poc && typeof poc === 'number' && poc > 0) {
+          const price = proposal.context?.price || proposal.price || 0;
+          let structureText = '';
+          if (price > poc) {
+            structureText = `Price $${price.toFixed(2)} Above POC $${poc.toFixed(2)} (Breakout)`;
+          } else if (price < poc) {
+            structureText = `Price $${price.toFixed(2)} Below POC $${poc.toFixed(2)} (Breakdown)`;
+          } else {
+            structureText = `Price $${price.toFixed(2)} At POC $${poc.toFixed(2)}`;
+          }
+          alertFields.push({ name: 'Market Structure', value: structureText, inline: false });
+        }
+        
         this.sendDiscordAlert(
           '✅ Trade Executed',
           `**${proposal.symbol}** ${proposal.strategy}`,
           0x22c55e, // Green
-          [
-            { name: 'Action', value: `${proposal.side} (Limit $${proposal.price})`, inline: true },
-            { name: 'Quantity', value: proposal.quantity.toString(), inline: true },
-            { name: 'Order ID', value: `${orderResult.order_id}`, inline: false }
-          ]
+          alertFields
         );
 
         // Phase C: Track Position Metadata for Correlation Guard

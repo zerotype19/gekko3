@@ -186,7 +186,11 @@ class MarketFeed:
                 'flow': inds.get('flow_state', 'NEUTRAL'),
                 'vix': inds.get('vix', 0),
                 'volume_velocity': inds.get('volume_velocity', 1.0),
-                'active_signal': self.last_signals.get(symbol, {}).get('signal', None)
+                'active_signal': self.last_signals.get(symbol, {}).get('signal', None),
+                # Volume Profile (Market Structure)
+                'poc': inds.get('poc', 0),  # Point of Control
+                'vah': inds.get('vah', 0),  # Value Area High
+                'val': inds.get('val', 0)   # Value Area Low
             }
         
         final_export = {
@@ -1861,6 +1865,8 @@ class MarketFeed:
                 'vwap': indicators['vwap'],
                 'volume_velocity': velocity,
                 'imbalance_score': round(imbalance_score, 1),  # REAL DATA
+                'poc': indicators.get('poc', 0),  # Point of Control (Market Structure)
+                'price': indicators['price']  # Current price for structure comparison
             }
         }
         
@@ -1995,7 +2001,9 @@ class MarketFeed:
             'vix': indicators.get('vix', 0),
             'flow_state': indicators.get('flow_state', 'UNKNOWN'),
             'iv_rank': self.alpha_engine.get_iv_rank(symbol),
-            'strategy_logic': 'Complex Structure'
+            'strategy_logic': 'Complex Structure',
+            'poc': indicators.get('poc', 0),  # Point of Control (Market Structure)
+            'price': indicators.get('price', 0)  # Current price for structure comparison
         }
 
         proposal = {

@@ -75,6 +75,24 @@
                     <span id="heartbeat" class="value">--</span>
                 </div>
             </div>
+
+            <div class="section-title" style="margin-top: 20px;">Market Structure (Volume Profile)</div>
+            <div class="grid">
+                <div class="metric">
+                    <span class="label">SPY POC</span>
+                    <span id="spyPoc" class="value">--</span>
+                    <span id="spyPocStatus" class="sub-value">--</span>
+                </div>
+                <div class="metric">
+                    <span class="label">Value Area</span>
+                    <span id="spyVa" class="value">--</span>
+                    <span id="spyVaStatus" class="sub-value">--</span>
+                </div>
+                <div class="metric" style="grid-column: span 2;">
+                    <span class="label">Price vs Value</span>
+                    <span id="spyStructure" class="value" style="font-size: 1.1rem;">--</span>
+                </div>
+            </div>
         </div>
 
         <div class="card">
@@ -132,7 +150,65 @@
 
                 document.getElementById('theta').textContent = '+' + (greeks.theta || 0).toFixed(1);
 
-                // 4. Heartbeat
+                // 4. Market Structure (Volume Profile)
+                const market = bs.market || {};
+                const spy = market.SPY || {};
+                const spyPrice = spy.price || 0;
+                const spyPoc = spy.poc || 0;
+                const spyVah = spy.vah || 0;
+                const spyVal = spy.val || 0;
+                
+                if (spyPoc > 0) {
+                    // Display POC
+                    document.getElementById('spyPoc').textContent = '$' + spyPoc.toFixed(2);
+                    const pocDistance = Math.abs(spyPrice - spyPoc);
+                    document.getElementById('spyPocStatus').textContent = `Distance: $${pocDistance.toFixed(2)}`;
+                    
+                    // Display Value Area
+                    if (spyVah > 0 && spyVal > 0) {
+                        document.getElementById('spyVa').textContent = `$${spyVal.toFixed(2)} - $${spyVah.toFixed(2)}`;
+                        const vaWidth = spyVah - spyVal;
+                        document.getElementById('spyVaStatus').textContent = `Width: $${vaWidth.toFixed(2)}`;
+                    } else {
+                        document.getElementById('spyVa').textContent = '--';
+                        document.getElementById('spyVaStatus').textContent = '';
+                    }
+                    
+                    // Price vs Value Structure
+                    const structureEl = document.getElementById('spyStructure');
+                    if (spyPrice > spyVah && spyVah > 0) {
+                        structureEl.textContent = '📈 Breakout (Above Value)';
+                        structureEl.style.color = 'var(--green)';
+                    } else if (spyPrice < spyVal && spyVal > 0) {
+                        structureEl.textContent = '📉 Breakdown (Below Value)';
+                        structureEl.style.color = 'var(--red)';
+                    } else if (spyPrice >= spyVal && spyPrice <= spyVah && spyVal > 0) {
+                        structureEl.textContent = '↔️ In Value Area';
+                        structureEl.style.color = 'var(--text)';
+                    } else if (spyPoc > 0) {
+                        // Fallback: just show price vs POC
+                        if (spyPrice > spyPoc) {
+                            structureEl.textContent = `Above POC (${((spyPrice - spyPoc) / spyPoc * 100).toFixed(2)}%)`;
+                            structureEl.style.color = 'var(--green)';
+                        } else if (spyPrice < spyPoc) {
+                            structureEl.textContent = `Below POC (${((spyPoc - spyPrice) / spyPoc * 100).toFixed(2)}%)`;
+                            structureEl.style.color = 'var(--red)';
+                        } else {
+                            structureEl.textContent = 'At POC';
+                            structureEl.style.color = 'var(--text)';
+                        }
+                    } else {
+                        structureEl.textContent = '--';
+                    }
+                } else {
+                    document.getElementById('spyPoc').textContent = '--';
+                    document.getElementById('spyPocStatus').textContent = 'Warming up...';
+                    document.getElementById('spyVa').textContent = '--';
+                    document.getElementById('spyVaStatus').textContent = '';
+                    document.getElementById('spyStructure').textContent = '--';
+                }
+
+                // 5. Heartbeat
                 const lastHeartbeat = data.lastHeartbeat || 0;
                 const secondsAgo = lastHeartbeat > 0 ? Math.floor((Date.now() - lastHeartbeat) / 1000) : 999;
                 const hbEl = document.getElementById('heartbeat');
