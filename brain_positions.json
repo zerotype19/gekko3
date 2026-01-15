@@ -1,5 +1,5 @@
 {
-  "DIA_CREDIT_SPREAD_RECOVERED_1768502094": {
+  "DIA_CREDIT_SPREAD_RECOVERED_1768502591": {
     "symbol": "DIA",
     "strategy": "CREDIT_SPREAD",
     "legs": [
@@ -22,10 +22,10 @@
     ],
     "entry_price": 6.22,
     "bias": "bullish",
-    "timestamp": "2026-01-15T13:34:54.087940",
+    "timestamp": "2026-01-15T13:43:11.484685",
     "highest_pnl": -100.0
   },
-  "IWM_MANUAL_RECOVERY_RECOVERED_1768502094": {
+  "IWM_MANUAL_RECOVERY_RECOVERED_1768502591": {
     "symbol": "IWM",
     "strategy": "MANUAL_RECOVERY",
     "legs": [
@@ -96,10 +96,10 @@
     ],
     "entry_price": 72.98,
     "bias": "neutral",
-    "timestamp": "2026-01-15T13:34:54.087979",
+    "timestamp": "2026-01-15T13:43:11.484699",
     "highest_pnl": -100.0
   },
-  "QQQ_MANUAL_RECOVERY_RECOVERED_1768502094": {
+  "QQQ_MANUAL_RECOVERY_RECOVERED_1768502591": {
     "symbol": "QQQ",
     "strategy": "MANUAL_RECOVERY",
     "legs": [
@@ -116,13 +116,21 @@
         "expiration": "2026-02-13",
         "strike": 585.0,
         "type": "PUT",
-        "quantity": 4,
+        "quantity": 6,
         "side": "BUY"
       },
       {
         "symbol": "QQQ260213P00603000",
         "expiration": "2026-02-13",
         "strike": 603.0,
+        "type": "PUT",
+        "quantity": 1,
+        "side": "SELL"
+      },
+      {
+        "symbol": "QQQ260213P00610000",
+        "expiration": "2026-02-13",
+        "strike": 610.0,
         "type": "PUT",
         "quantity": 1,
         "side": "SELL"
@@ -144,12 +152,12 @@
         "side": "SELL"
       }
     ],
-    "entry_price": 34.66,
+    "entry_price": 46.76,
     "bias": "neutral",
-    "timestamp": "2026-01-15T13:34:54.088004",
+    "timestamp": "2026-01-15T13:43:11.484707",
     "highest_pnl": -100.0
   },
-  "SPY_MANUAL_RECOVERY_RECOVERED_1768502094": {
+  "SPY_MANUAL_RECOVERY_RECOVERED_1768502591": {
     "symbol": "SPY",
     "strategy": "MANUAL_RECOVERY",
     "legs": [
@@ -180,7 +188,7 @@
     ],
     "entry_price": 21.74,
     "bias": "neutral",
-    "timestamp": "2026-01-15T13:34:54.088023",
+    "timestamp": "2026-01-15T13:43:11.484713",
     "highest_pnl": -100.0
   }
 }

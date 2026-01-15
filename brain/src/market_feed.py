@@ -148,6 +148,15 @@ class MarketFeed:
                         v['closing_timestamp'] = datetime.fromisoformat(v['closing_timestamp'])
                     if 'opening_timestamp' in v and isinstance(v['opening_timestamp'], str):
                         v['opening_timestamp'] = datetime.fromisoformat(v['opening_timestamp'])
+                    
+                    # Ensure status is set (recovered positions might not have it)
+                    if 'status' not in v or v.get('status') is None:
+                        v['status'] = 'OPEN'  # Default to OPEN for recovered positions
+                    
+                    # Initialize live_greeks if missing (will be calculated on next _manage_positions cycle)
+                    if 'live_greeks' not in v:
+                        v['live_greeks'] = {'delta': 0.0, 'theta': 0.0, 'vega': 0.0}
+                    
                     self.open_positions[k] = v
                 if self.open_positions:
                     logging.info(f"♻️ Restored {len(self.open_positions)} positions from disk.")
@@ -466,9 +475,11 @@ class MarketFeed:
         Smart Manager 2.0: Advanced Exit Logic + Order Verification
         """
         # Collect symbols for quotes (only for OPEN positions - CLOSING positions don't need quotes)
+        # Also include positions with status=None (recovered positions default to OPEN)
         all_legs = []
         for pos in self.open_positions.values():
-            if pos.get('status') == 'OPEN':
+            status = pos.get('status')
+            if status == 'OPEN' or status is None:
                 for leg in pos['legs']:
                     all_legs.append(leg['symbol'])
         
