@@ -1494,13 +1494,19 @@ class MarketFeed:
                                     continue
                                 
                                 # Timesales endpoint returns: series.data (array of data points)
-                                # Safely access nested data
-                                series = data.get('series')
-                                if not series or not isinstance(series, dict):
-                                    logging.debug(f"⚠️ No 'series' key or invalid format for {symbol} on {day_date.date()}, data keys: {list(data.keys())}")
+                                # Tradier API quirk: Returns {"series": null} instead of empty list when no data
+                                # Safely navigate the response structure
+                                series_root = data.get('series')
+                                if series_root is None:
+                                    # Tradier returned {"series": null} - no data for this symbol/date
+                                    logging.debug(f"⚠️ No series data for {symbol} on {day_date.date()} (API returned null)")
                                     continue
                                 
-                                series_data = series.get('data', [])
+                                if not isinstance(series_root, dict):
+                                    logging.debug(f"⚠️ Invalid series format for {symbol} on {day_date.date()}: {type(series_root)}")
+                                    continue
+                                
+                                series_data = series_root.get('data', [])
                                 
                                 # If no data, check if there's an error message
                                 if not series_data and 'fault' in data:
