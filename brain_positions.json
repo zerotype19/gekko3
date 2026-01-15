@@ -30,9 +30,10 @@
       "theta": -5.792485695507281,
       "vega": -2.4751227761258363
     },
-    "close_order_id": "24390956",
-    "close_limit_price": 0.25500000000000006,
-    "closing_timestamp": "2026-01-15T14:20:55.544193"
+    "close_limit_price": 0.3449999999999999,
+    "cancel_attempt_time": "2026-01-15T14:31:02.460751",
+    "close_order_id": "24392022",
+    "closing_timestamp": "2026-01-15T14:31:23.327965"
   },
   "IWM_MANUAL_RECOVERY_RECOVERED_1768504842": {
     "symbol": "IWM",
@@ -107,14 +108,11 @@
     "bias": "neutral",
     "timestamp": "2026-01-15T14:20:42.739348",
     "highest_pnl": 60.920800219238146,
-    "status": "CLOSING",
+    "status": "OPEN",
     "live_greeks": {
       "delta": 189.97009925512782,
       "theta": 39.53663901588105,
       "vega": -143.73612672031385
     },
-    "close_order_id": "24390959",
-    "close_limit_price": 28.570000000000004,
-    "closing_timestamp": "2026-01-15T14:20:57.095741"
-  }
-}
+    "close_limit_price": 29.959999999999997,
+    "last_close_attempt": 
