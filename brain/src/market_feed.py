@@ -596,8 +596,14 @@ class MarketFeed:
                 if pos.get('cancelling'):
                     # Wait for cancellation to complete (check status)
                     status = await self._get_order_status(order_id)
-                    if status in ['canceled', 'rejected', 'expired', 'filled']:
-                        # Cancellation complete (or filled), reset to OPEN
+                    if status == 'filled':
+                        # Order was filled before cancellation completed - SUCCESS!
+                        logging.info(f"✅ Order {order_id} FILLED (during cancellation attempt). Position {trade_id} closed successfully.")
+                        del self.open_positions[trade_id]
+                        self._save_positions_to_disk()
+                        continue
+                    elif status in ['canceled', 'rejected', 'expired']:
+                        # Cancellation complete (or order rejected/expired), reset to OPEN for retry
                         logging.info(f"✅ Order {order_id} {status}. Will retry after delay.")
                         pos['status'] = 'OPEN'
                         del pos['close_order_id']
