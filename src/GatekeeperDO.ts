@@ -690,16 +690,24 @@ export class GatekeeperDO {
             ? 'credit'  // Opening: assume credit spreads (premium selling)
             : 'market'; // Closing: use market to avoid buying power calculation issues
 
-          orderResult = await this.tradierClient.placeOrder({
+          // Build order payload - for market orders, don't include price
+          const orderPayload: any = {
             class: 'multileg',
             symbol: proposal.symbol,
             type: orderType,
-            price: proposal.price,
             duration: 'day',
             'option_symbol[]': optionSymbols,
             'side[]': sides,
             'quantity[]': quantities
-          });
+          };
+          
+          // Only include price for credit/debit/even types (limit orders)
+          // Market orders don't accept a price parameter
+          if (orderType !== 'market' && proposal.price !== undefined) {
+            orderPayload.price = proposal.price;
+          }
+          
+          orderResult = await this.tradierClient.placeOrder(orderPayload);
 
         } else {
           throw new Error(`Unsupported strategy for execution: ${proposal.strategy}`);

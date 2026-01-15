@@ -1,11 +1,11 @@
 {
   "system": {
-    "timestamp": "2026-01-15T13:58:15.573757",
+    "timestamp": "2026-01-15T13:58:45.142370",
     "regime": "LOW_VOL_CHOP",
     "portfolio_risk": {
-      "delta": 217.38946187289028,
-      "theta": -38.72747941055087,
-      "vega": -68.07716443883771
+      "delta": 0.0,
+      "theta": 0.0,
+      "vega": 0.0
     },
     "open_positions": 3,
     "total_positions": 3,
@@ -14,31 +14,34 @@
         "trade_id": "DIA_CREDIT_SPREAD_RECOVERED_1768503446",
         "symbol": "DIA",
         "strategy": "CREDIT_SPREAD",
-        "status": "OPEN",
+        "status": "CLOSING",
         "entry_price": 6.22,
         "bias": "bullish",
         "legs_count": 2,
-        "timestamp": "2026-01-15T13:57:26.266780"
+        "timestamp": "2026-01-15T13:57:26.266780",
+        "close_order_id": "24388490"
       },
       {
         "trade_id": "IWM_MANUAL_RECOVERY_RECOVERED_1768503446",
         "symbol": "IWM",
         "strategy": "MANUAL_RECOVERY",
-        "status": "OPEN",
+        "status": "CLOSING",
         "entry_price": 72.98,
         "bias": "neutral",
         "legs_count": 8,
-        "timestamp": "2026-01-15T13:57:26.266812"
+        "timestamp": "2026-01-15T13:57:26.266812",
+        "close_order_id": "24388493"
       },
       {
         "trade_id": "QQQ_MANUAL_RECOVERY_RECOVERED_1768503446",
         "symbol": "QQQ",
         "strategy": "MANUAL_RECOVERY",
-        "status": "OPEN",
+        "status": "CLOSING",
         "entry_price": 46.76,
         "bias": "neutral",
         "legs_count": 6,
-        "timestamp": "2026-01-15T13:57:26.266833"
+        "timestamp": "2026-01-15T13:57:26.266833",
+        "close_order_id": "24388498"
       }
     ],
     "status": "CONNECTED"
@@ -52,7 +55,7 @@
       "trend": "UPTREND",
       "flow": "NEUTRAL",
       "vix": 16.14,
-      "volume_velocity": 0.08462442779175232,
+      "volume_velocity": 0.304165216306211,
       "active_signal": null,
       "poc": 694.7471428571429,
       "vah": 694.8977551020408,
@@ -69,7 +72,7 @@
       "trend": "DOWNTREND",
       "flow": "NEUTRAL",
       "vix": 16.14,
-      "volume_velocity": 0.1100787969439335,
+      "volume_velocity": 0.34541518426091905,
       "active_signal": null,
       "poc": 626.1251612903226,
       "vah": 626.4270967741935,
@@ -86,7 +89,7 @@
       "trend": "UPTREND",
       "flow": "NEUTRAL",
       "vix": 16.14,
-      "volume_velocity": 0.11612040768704442,
+      "volume_velocity": 0.3615447389202437,
       "active_signal": null,
       "poc": 266.4925,
       "vah": 266.84409090909094,
@@ -103,7 +106,7 @@
       "trend": "UPTREND",
       "flow": "NEUTRAL",
       "vix": 16.14,
-      "volume_velocity": 0.10350104092100165,
+      "volume_velocity": 0.24758814991889355,
       "active_signal": null,
       "poc": 495.42777777777775,
       "vah": 495.62888888888887,

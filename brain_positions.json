@@ -23,7 +23,16 @@
     "entry_price": 6.22,
     "bias": "bullish",
     "timestamp": "2026-01-15T13:57:26.266780",
-    "highest_pnl": -100.0
+    "highest_pnl": 95.90032154340837,
+    "status": "CLOSING",
+    "live_greeks": {
+      "delta": 6.554392344139263,
+      "theta": -5.784279118811984,
+      "vega": -2.424775969653723
+    },
+    "close_order_id": "24388490",
+    "close_limit_price": 0.3049999999999999,
+    "closing_timestamp": "2026-01-15T13:58:26.851730"
   },
   "IWM_MANUAL_RECOVERY_RECOVERED_1768503446": {
     "symbol": "IWM",
@@ -97,7 +106,16 @@
     "entry_price": 72.98,
     "bias": "neutral",
     "timestamp": "2026-01-15T13:57:26.266812",
-    "highest_pnl": -100.0
+    "highest_pnl": 60.18087147163607,
+    "status": "CLOSING",
+    "live_greeks": {
+      "delta": 208.10605047642912,
+      "theta": 44.325016421892606,
+      "vega": -148.30578060142673
+    },
+    "close_order_id": "24388493",
+    "close_limit_price": 29.119999999999994,
+    "closing_timestamp": "2026-01-15T13:58:27.510948"
   },
   "QQQ_MANUAL_RECOVERY_RECOVERED_1768503446": {
     "symbol": "QQQ",
@@ -155,6 +173,15 @@
     "entry_price": 46.76,
     "bias": "neutral",
     "timestamp": "2026-01-15T13:57:26.266833",
-    "highest_pnl": -100.0
+    "highest_pnl": 91.42429426860565,
+    "status": "CLOSING",
+    "live_greeks": {
+      "delta": 2.729019052321899,
+      "theta": -77.26821671363149,
+      "vega": 82.65339213224274
+    },
+    "close_order_id": "24388498",
+    "close_limit_price": 4.070000000000002,
+    "closing_timestamp": "2026-01-15T13:58:28.602038"
   }
 }
