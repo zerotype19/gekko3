@@ -8,7 +8,8 @@ import aiohttp
 import asyncio
 import logging
 import os
-from typing import Optional
+from typing import Optional, Dict, Any, List
+from datetime import datetime
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -39,7 +40,7 @@ class DiscordNotifier:
         else:
             logging.info("✅ Discord Notifier initialized")
     
-    async def send(self, message: str, color: int = COLOR_BLUE, title: Optional[str] = None) -> bool:
+    async def send(self, message: str, color: int = COLOR_BLUE, title: Optional[str] = None, fields: Optional[List[Dict[str, Any]]] = None) -> bool:
         """
         Send a Discord notification (fire and forget)
         
@@ -47,6 +48,7 @@ class DiscordNotifier:
             message: Message content
             color: Embed color (use COLOR_* constants)
             title: Optional embed title
+            fields: Optional list of field dicts [{'name': '...', 'value': '...', 'inline': True}]
             
         Returns:
             True if sent successfully, False otherwise (does not raise exceptions)
@@ -58,11 +60,14 @@ class DiscordNotifier:
         embed = {
             "description": message,
             "color": color,
-            "timestamp": None  # Discord will auto-add timestamp
+            "timestamp": datetime.utcnow().isoformat()  # Explicit timestamp
         }
         
         if title:
             embed["title"] = title
+            
+        if fields:
+            embed["fields"] = fields
         
         payload = {
             "embeds": [embed]
@@ -70,15 +75,17 @@ class DiscordNotifier:
         
         # Fire and forget - don't block on network calls
         try:
-            logging.info(f"📤 Sending Discord notification: {title or 'Untitled'}")
+            # Downgraded to DEBUG to reduce log noise
+            logging.debug(f"📤 Sending Discord notification: {title or 'Untitled'}")
+            
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     self.webhook_url,
                     json=payload,
                     timeout=aiohttp.ClientTimeout(total=5)  # 5 second timeout
                 ) as resp:
-                    if resp.status == 204:
-                        logging.info(f"✅ Discord notification sent successfully: {title or 'Untitled'}")
+                    if 200 <= resp.status < 300:
+                        logging.debug(f"✅ Discord notification sent: {title or 'Untitled'}")
                         return True
                     else:
                         error_text = await resp.text()
@@ -95,9 +102,9 @@ class DiscordNotifier:
         """Send info notification (blue)"""
         return await self.send(message, COLOR_BLUE, title)
     
-    async def send_success(self, message: str, title: Optional[str] = None) -> bool:
+    async def send_success(self, message: str, title: Optional[str] = None, fields: Optional[List[Dict]] = None) -> bool:
         """Send success notification (green)"""
-        return await self.send(message, COLOR_GREEN, title)
+        return await self.send(message, COLOR_GREEN, title, fields)
     
     async def send_warning(self, message: str, title: Optional[str] = None) -> bool:
         """Send warning notification (yellow)"""
