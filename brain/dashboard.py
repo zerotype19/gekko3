@@ -153,7 +153,7 @@ if positions_list:
     
     if pos_data:
         df = pd.DataFrame(pos_data)
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, width='stretch', hide_index=True)
         
         # Show order IDs if present
         for pos in positions_list:
@@ -215,7 +215,7 @@ for symbol, metrics in market_data.items():
                 }
             ))
             fig_rsi.update_layout(height=200, margin=dict(l=20,r=20,t=30,b=20))
-            st.plotly_chart(fig_rsi, use_container_width=True, key=f"rsi_gauge_{symbol}")
+            st.plotly_chart(fig_rsi, width='stretch', key=f"rsi_gauge_{symbol}")
 
         with g2:
             # IV Rank Bar
