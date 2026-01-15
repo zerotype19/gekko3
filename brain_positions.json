@@ -1,5 +1,5 @@
 {
-  "DIA_CREDIT_SPREAD_RECOVERED_1768498431": {
+  "DIA_CREDIT_SPREAD_RECOVERED_1768499583": {
     "symbol": "DIA",
     "strategy": "CREDIT_SPREAD",
     "legs": [
@@ -22,10 +22,10 @@
     ],
     "entry_price": 6.22,
     "bias": "bullish",
-    "timestamp": "2026-01-15T12:33:51.260918",
+    "timestamp": "2026-01-15T12:53:03.842815",
     "highest_pnl": -100.0
   },
-  "IWM_MANUAL_RECOVERY_RECOVERED_1768498431": {
+  "IWM_MANUAL_RECOVERY_RECOVERED_1768499583": {
     "symbol": "IWM",
     "strategy": "MANUAL_RECOVERY",
     "legs": [
@@ -96,12 +96,12 @@
     ],
     "entry_price": 72.98,
     "bias": "neutral",
-    "timestamp": "2026-01-15T12:33:51.260959",
+    "timestamp": "2026-01-15T12:53:03.842876",
     "highest_pnl": -100.0
   },
-  "QQQ_IRON_BUTTERFLY_RECOVERED_1768498431": {
+  "QQQ_MANUAL_RECOVERY_RECOVERED_1768499583": {
     "symbol": "QQQ",
-    "strategy": "IRON_BUTTERFLY",
+    "strategy": "MANUAL_RECOVERY",
     "legs": [
       {
         "symbol": "QQQ260213P00580000",
@@ -116,7 +116,7 @@
         "expiration": "2026-02-13",
         "strike": 585.0,
         "type": "PUT",
-        "quantity": 2,
+        "quantity": 4,
         "side": "BUY"
       },
       {
@@ -134,14 +134,22 @@
         "type": "PUT",
         "quantity": 1,
         "side": "SELL"
+      },
+      {
+        "symbol": "QQQ260213P00612000",
+        "expiration": "2026-02-13",
+        "strike": 612.0,
+        "type": "PUT",
+        "quantity": 1,
+        "side": "SELL"
       }
     ],
-    "entry_price": 22.22,
+    "entry_price": 34.66,
     "bias": "neutral",
-    "timestamp": "2026-01-15T12:33:51.260992",
+    "timestamp": "2026-01-15T12:53:03.842904",
     "highest_pnl": -100.0
   },
-  "SPY_CREDIT_SPREAD_RECOVERED_1768498431": {
+  "SPY_CREDIT_SPREAD_RECOVERED_1768499583": {
     "symbol": "SPY",
     "strategy": "CREDIT_SPREAD",
     "legs": [
@@ -164,7 +172,7 @@
     ],
     "entry_price": 11.04,
     "bias": "bullish",
-    "timestamp": "2026-01-15T12:33:51.261013",
+    "timestamp": "2026-01-15T12:53:03.842924",
     "highest_pnl": -100.0
   }
 }
