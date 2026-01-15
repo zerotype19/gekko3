@@ -222,6 +222,11 @@ class MarketFeed:
             inds = self.alpha_engine.get_indicators(symbol)
             iv_rank = self.alpha_engine.get_iv_rank(symbol)
             
+            # Get warm status and candle count for dashboard
+            is_warm = inds.get('is_warm', False)
+            candle_count = inds.get('candle_count', 0)
+            sma_200 = inds.get('sma_200')
+            
             symbols_data[symbol] = {
                 'price': inds.get('price', 0),
                 'rsi': inds.get('rsi', 50),
@@ -235,7 +240,11 @@ class MarketFeed:
                 # Volume Profile (Market Structure)
                 'poc': inds.get('poc', 0),  # Point of Control
                 'vah': inds.get('vah', 0),  # Value Area High
-                'val': inds.get('val', 0)   # Value Area Low
+                'val': inds.get('val', 0),  # Value Area Low
+                # Warm-up status for dashboard
+                'is_warm': is_warm,
+                'candle_count': candle_count,
+                'sma_200': sma_200  # Include SMA value so dashboard can show it
             }
         
         final_export = {

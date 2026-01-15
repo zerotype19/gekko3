@@ -178,23 +178,28 @@ class AlphaEngine:
         # Sort by timestamp (oldest first)
         candles_df = candles_df.sort_values('timestamp').reset_index(drop=True)
         
-        # Trim to lookback window
-        if len(candles_df) > 0:
-            cutoff_time = candles_df['timestamp'].iloc[-1] - timedelta(minutes=self.lookback_minutes)
-            candles_df = candles_df[candles_df['timestamp'] >= cutoff_time].reset_index(drop=True)
+        # For warm-up, keep at least 200 candles for SMA-200 calculation
+        # Don't trim to lookback_minutes during warm-up - we need the full history
+        # The lookback trimming will happen naturally as new candles come in
+        min_candles_needed = 200  # For SMA-200
         
         # Replace or append to existing candles
         if self.candles[symbol].empty:
-            self.candles[symbol] = candles_df
+            # Keep all candles (or at least 200 for SMA calculation)
+            if len(candles_df) > min_candles_needed:
+                # Keep the most recent candles, but ensure we have at least 200
+                self.candles[symbol] = candles_df.tail(max(min_candles_needed, self.lookback_minutes)).copy()
+            else:
+                self.candles[symbol] = candles_df.copy()
         else:
             # Merge with existing, avoiding duplicates
             combined = pd.concat([self.candles[symbol], candles_df], ignore_index=True)
             combined = combined.drop_duplicates(subset=['timestamp'], keep='last')
             combined = combined.sort_values('timestamp').reset_index(drop=True)
-            # Trim to lookback
-            if len(combined) > 0:
-                cutoff_time = combined['timestamp'].iloc[-1] - timedelta(minutes=self.lookback_minutes)
-                combined = combined[combined['timestamp'] >= cutoff_time].reset_index(drop=True)
+            # Keep at least 200 candles for SMA calculation
+            if len(combined) > min_candles_needed:
+                # Keep the most recent candles, prioritizing SMA calculation needs
+                combined = combined.tail(max(min_candles_needed, self.lookback_minutes)).reset_index(drop=True)
             self.candles[symbol] = combined
         
         # Update session metrics from loaded data
