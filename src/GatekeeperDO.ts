@@ -7,6 +7,7 @@ import { CONSTITUTION, type Env } from './config';
 import { createTradierClient } from './lib/tradier';
 import { verifySignature, extractSignatureFromHeaders } from './lib/security';
 import type { TradeProposal, ProposalEvaluation, ProposalStatus, SystemStatus } from './types';
+import { EmailMessage } from 'cloudflare:email';
 
 /**
  * Calculate Days To Expiration (DTE) from an ISO date string
@@ -1110,7 +1111,7 @@ export class GatekeeperDO {
       }
 
       // 4. Send Email Report
-      if (this.env.RESEND_API_KEY) {
+      if (this.env.SEND_EMAIL) {
         await this.sendEmailReport({
           dayPnLDollars,
           dayPnLPercent,
@@ -1128,7 +1129,7 @@ export class GatekeeperDO {
   }
 
   /**
-   * Send email report via Resend API
+   * Send email report via Cloudflare Email Workers
    */
   private async sendEmailReport(data: {
     dayPnLDollars: number;
@@ -1271,26 +1272,36 @@ Automated report from Gekko3 Trading System
     `;
 
     try {
-      const response = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.env.RESEND_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          from: this.env.RESEND_FROM_EMAIL || 'Gekko3 <onboarding@resend.dev>',
-          to: ['kevin.mcgovern@gmail.com'],
-          subject: `Gekko3 Daily Report - ${dateStr} - ${pnlSign}$${dayPnLDollars.toFixed(2)} (${pnlSign}${dayPnLPercent.toFixed(2)}%)`,
-          html: html,
-          text: text,
-        }),
-      });
+      // Create MIME message for Cloudflare Email Workers
+      const mimeMessage = [
+        `From: Gekko3 Reports <noreply@gekkoworks.com>`,
+        `To: reports@gekkoworks.com`,
+        `Subject: Gekko3 Daily Report - ${dateStr} - ${pnlSign}$${dayPnLDollars.toFixed(2)} (${pnlSign}${dayPnLPercent.toFixed(2)}%)`,
+        `Content-Type: multipart/alternative; boundary="boundary12345"`,
+        ``,
+        `--boundary12345`,
+        `Content-Type: text/plain; charset=utf-8`,
+        `Content-Transfer-Encoding: quoted-printable`,
+        ``,
+        text.replace(/\n/g, '\r\n'),
+        ``,
+        `--boundary12345`,
+        `Content-Type: text/html; charset=utf-8`,
+        `Content-Transfer-Encoding: quoted-printable`,
+        ``,
+        html.replace(/\n/g, '\r\n'),
+        ``,
+        `--boundary12345--`
+      ].join('\r\n');
 
-      if (!response.ok) {
-        const error = await response.text();
-        console.error('Resend API error:', error);
-        throw new Error(`Failed to send email: ${response.status}`);
-      }
+      // Send via Cloudflare Email binding
+      const emailMessage = new EmailMessage(
+        'noreply@gekkoworks.com',
+        'reports@gekkoworks.com',
+        mimeMessage
+      );
+
+      await this.env.SEND_EMAIL.send(emailMessage);
     } catch (e) {
       console.error('Email send error:', e);
       throw e;

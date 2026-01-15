@@ -16,6 +16,10 @@ binding = "DB"
 database_name = "gekko3-ledger"
 database_id = "df2c1409-2376-4075-83ba-3e9fe6fe5ac3"
 
+# Email routing for EOD reports
+[[send_email]]
+destination_address = "reports@gekkoworks.com"
+
 [env.production]
 vars = { ENV = "production" }
 

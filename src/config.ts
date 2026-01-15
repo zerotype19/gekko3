@@ -58,8 +58,7 @@ export interface Env {
   TRADIER_ACCOUNT_ID: string;
   API_SECRET: string;
   DISCORD_WEBHOOK_URL?: string; // Optional: Discord webhook for EOD reports
-  RESEND_API_KEY?: string; // Optional: Resend API key for email reports
-  RESEND_FROM_EMAIL?: string; // Optional: Resend "from" email address (default: onboarding@resend.dev for testing)
+  SEND_EMAIL?: any; // Cloudflare Email binding for sending EOD reports (typed as any due to Cloudflare Workers types)
 
   // Environment
   ENV?: 'production' | 'staging' | 'development';
