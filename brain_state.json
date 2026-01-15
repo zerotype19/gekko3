@@ -1,97 +1,130 @@
 {
   "system": {
-    "timestamp": "2026-01-15T15:28:11.140599",
+    "timestamp": "2026-01-15T15:31:40.742530",
     "regime": "TRENDING",
     "portfolio_risk": {
-      "delta": 0.0,
-      "theta": 0.0,
-      "vega": 0.0
+      "delta": -0.3835545088608825,
+      "theta": -40.05146876180739,
+      "vega": 45.76283139094256
     },
-    "open_positions": 1,
-    "total_positions": 1,
+    "open_positions": 3,
+    "total_positions": 4,
     "positions": [
       {
-        "trade_id": "DIA_CREDIT_SPREAD_RECOVERED_1768508450",
+        "trade_id": "DIA_CREDIT_SPREAD_RECOVERED_1768508937",
         "symbol": "DIA",
         "strategy": "CREDIT_SPREAD",
         "status": "CLOSING",
         "entry_price": 6.22,
         "bias": "bullish",
         "legs_count": 2,
-        "timestamp": "2026-01-15T15:20:50.843421",
-        "close_order_id": "24397697"
+        "timestamp": "2026-01-15T15:28:57.304439",
+        "close_order_id": "24397955"
+      },
+      {
+        "trade_id": "IWM_RATIO_SPREAD_1768509003",
+        "symbol": "IWM",
+        "strategy": "RATIO_SPREAD",
+        "status": "OPENING",
+        "entry_price": 0.08,
+        "bias": "bearish",
+        "legs_count": 2,
+        "timestamp": "2026-01-15T15:30:03.682127",
+        "open_order_id": "24398003"
+      },
+      {
+        "trade_id": "QQQ_RATIO_SPREAD_1768509006",
+        "symbol": "QQQ",
+        "strategy": "RATIO_SPREAD",
+        "status": "OPEN",
+        "entry_price": 0.45,
+        "bias": "bearish",
+        "legs_count": 2,
+        "timestamp": "2026-01-15T15:30:36.666901",
+        "open_order_id": "24398041"
+      },
+      {
+        "trade_id": "SPY_RATIO_SPREAD_1768509008",
+        "symbol": "SPY",
+        "strategy": "RATIO_SPREAD",
+        "status": "OPEN",
+        "entry_price": 0.69,
+        "bias": "bearish",
+        "legs_count": 2,
+        "timestamp": "2026-01-15T15:31:00.953332",
+        "open_order_id": "24398082"
       }
     ],
     "status": "CONNECTED"
   },
   "market": {
     "SPY": {
-      "price": 691.475,
-      "rsi": 26.29183667800862,
-      "adx": 47.81785824122468,
+      "price": 691.745,
+      "rsi": 33.223227938933235,
+      "adx": 44.8039369359751,
       "iv_rank": 15.944873304548777,
       "trend": "DOWNTREND",
       "flow": "NEUTRAL",
-      "vix": 16.31,
-      "volume_velocity": 0.024900867131264603,
+      "vix": 16.33,
+      "volume_velocity": 0.114602526852307,
       "active_signal": null,
       "poc": 694.7484313253012,
       "vah": 694.9488795180723,
-      "val": 693.3452939759037,
+      "val": 693.2951819277109,
       "is_warm": true,
-      "candle_count": 359,
-      "sma_200": 694.068268
+      "candle_count": 361,
+      "sma_200": 694.0323685
     },
     "QQQ": {
-      "price": 621.305,
-      "rsi": 30.060430850121193,
-      "adx": 46.61326732268705,
+      "price": 621.485,
+      "rsi": 31.521423423229663,
+      "adx": 43.93646230992863,
       "iv_rank": 15.543186628226652,
       "trend": "DOWNTREND",
       "flow": "NEUTRAL",
-      "vix": 16.31,
-      "volume_velocity": 0.03933861999945619,
+      "vix": 16.33,
+      "volume_velocity": 0.19844734989172033,
       "active_signal": null,
       "poc": 625.4398324022346,
       "vah": 626.7427374301676,
       "val": 623.2349162011172,
       "is_warm": true,
-      "candle_count": 359,
-      "sma_200": 624.6751794999999
+      "candle_count": 361,
+      "sma_200": 624.6229975
     },
     "IWM": {
-      "price": 265.725,
-      "rsi": 33.59163881476168,
-      "adx": 30.135563464260166,
+      "price": 265.805,
+      "rsi": 35.863993104385216,
+      "adx": 29.55628895481075,
       "iv_rank": 13.820436775411316,
       "trend": "DOWNTREND",
       "flow": "NEUTRAL",
-      "vix": 16.31,
-      "volume_velocity": 0.1062391747017317,
+      "vix": 16.33,
+      "volume_velocity": 0.24830812754197953,
       "active_signal": null,
       "poc": 266.3920454545455,
       "vah": 266.84409090909094,
       "val": 264.23227272727274,
       "is_warm": true,
-      "candle_count": 359,
-      "sma_200": 266.424652
+      "candle_count": 361,
+      "sma_200": 266.416927
     },
     "DIA": {
-      "price": 494.03,
-      "rsi": 32.11699442062407,
-      "adx": 42.23443007623063,
+      "price": 494.095,
+      "rsi": 33.46473858227769,
+      "adx": 42.43587412422629,
       "iv_rank": 21.715987192299053,
       "trend": "DOWNTREND",
       "flow": "NEUTRAL",
-      "vix": 16.31,
-      "volume_velocity": 0.055248334311635616,
+      "vix": 16.33,
+      "volume_velocity": 0.17932571826126464,
       "active_signal": null,
       "poc": 495.42777777777775,
       "vah": 495.62888888888887,
       "val": 492.7127777777778,
       "is_warm": true,
-      "candle_count": 359,
-      "sma_200": 495.22721149999995
+      "candle_count": 361,
+      "sma_200": 495.2138865
     }
   }
 }

@@ -578,6 +578,10 @@ class MarketFeed:
                     logging.info(f"✅ ENTRY FILLED for {trade_id}. Tracking active position.")
                     pos['status'] = 'OPEN'
                     pos['timestamp'] = now  # Reset timer to fill time
+                    # Initialize live_greeks - will be calculated on next _manage_positions cycle
+                    # (Can't calculate immediately because quotes were fetched before status changed to OPEN)
+                    if 'live_greeks' not in pos:
+                        pos['live_greeks'] = {'delta': 0.0, 'theta': 0.0, 'vega': 0.0}
                     # Verify actual quantities from Tradier (may differ if partially filled)
                     actual_positions = await self._get_actual_positions()
                     if actual_positions:
@@ -977,9 +981,31 @@ class MarketFeed:
         
         self.portfolio_greeks = {'delta': total_delta, 'theta': total_theta, 'vega': total_vega}
         if count > 0:
+            # Only warn if positions have been OPEN for >30 seconds without Greeks (prevents noise on fresh fills)
             if positions_without_greeks:
-                logging.warning(f"⚠️ Portfolio Greeks: {len(positions_without_greeks)} position(s) have zero Greeks "
-                              f"(may not have quotes yet): {', '.join(set(positions_without_greeks))}")
+                now = datetime.now()
+                stale_positions = []
+                for symbol in set(positions_without_greeks):
+                    # Find positions for this symbol that have been OPEN for >30 seconds
+                    for pos in self.open_positions.values():
+                        if pos.get('symbol') == symbol and pos.get('status') == 'OPEN':
+                            timestamp = pos.get('timestamp')
+                            if timestamp and isinstance(timestamp, datetime):
+                                if (now - timestamp).total_seconds() > 30:
+                                    stale_positions.append(symbol)
+                                    break
+                            # If no timestamp or not datetime, assume stale
+                            elif pos.get('status') == 'OPEN':
+                                stale_positions.append(symbol)
+                                break
+                
+                if stale_positions:
+                    logging.warning(f"⚠️ Portfolio Greeks: {len(stale_positions)} position(s) have zero Greeks after 30s "
+                                  f"(quotes may be unavailable): {', '.join(stale_positions)}")
+                else:
+                    # Fresh fills (<30s) - just debug log, not warning
+                    logging.debug(f"ℹ️ {len(positions_without_greeks)} newly filled position(s) awaiting quotes for Greeks: "
+                                f"{', '.join(set(positions_without_greeks))}")
             logging.info(f"📊 PORTFOLIO RISK: Delta {total_delta:+.1f} | Theta {total_theta:+.1f} | Vega {total_vega:+.1f} | Positions: {count}")
 
     async def _get_actual_positions(self) -> Dict[str, Dict]:
