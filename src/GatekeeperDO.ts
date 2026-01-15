@@ -11,12 +11,19 @@ import { EmailMessage } from 'cloudflare:email';
 
 /**
  * Calculate Days To Expiration (DTE) from an ISO date string
+ * CRITICAL FIX: Normalize both dates to midnight UTC to avoid timezone offset errors
+ * Example: Without normalization, 0 DTE could show as -1 or 1 depending on timezone
  */
 function calculateDTE(expirationDateStr: string): number {
   const expiration = new Date(expirationDateStr);
   const now = new Date();
+  
+  // Normalize to midnight UTC to compare dates only (not times)
+  expiration.setUTCHours(0, 0, 0, 0);
+  now.setUTCHours(0, 0, 0, 0);
+  
   const diffMs = expiration.getTime() - now.getTime();
-  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+  const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
   return diffDays;
 }
 
@@ -340,13 +347,17 @@ export class GatekeeperDO {
       };
     }
 
-    // Strict Limit Price Check
-    if (proposal.price === undefined || proposal.price === null || proposal.price <= 0) {
-      return {
-        status: 'REJECTED',
-        rejectionReason: 'Limit Price is required for safety',
-        evaluatedAt,
-      };
+    // Strict Limit Price Check (Only for non-market orders)
+    // Market orders don't require a price (used for emergency exits/illiquid positions)
+    const orderType = proposal.type || (proposal.side === 'OPEN' ? 'credit' : 'debit');
+    if (orderType !== 'market') {
+      if (proposal.price === undefined || proposal.price === null || proposal.price <= 0) {
+        return {
+          status: 'REJECTED',
+          rejectionReason: 'Limit Price is required for safety (non-market orders)',
+          evaluatedAt,
+        };
+      }
     }
 
     // 4.b Structure Validation (New for Phase B)
@@ -733,8 +744,11 @@ export class GatekeeperDO {
           .run();
 
         // ALERT: Send Trade Execution Notification
+        const actionText = orderType === 'market' 
+          ? `${proposal.side} (Market Order)`
+          : `${proposal.side} (Limit $${proposal.price})`;
         const alertFields: any[] = [
-          { name: 'Action', value: `${proposal.side} (Limit $${proposal.price})`, inline: true },
+          { name: 'Action', value: actionText, inline: true },
           { name: 'Quantity', value: proposal.quantity.toString(), inline: true },
           { name: 'Order ID', value: `${orderResult.order_id}`, inline: false }
         ];
