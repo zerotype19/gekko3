@@ -683,14 +683,15 @@ export class GatekeeperDO {
 
           // Order Type Logic
           // For OPEN orders: Use 'credit' (premium selling strategies)
-          // For CLOSE orders: Use 'market' to avoid buying power issues
-          // Tradier doesn't accept 'limit' for multileg orders - must use 'credit', 'debit', 'even', or 'market'
-          // Using 'market' for closing avoids margin calculation issues
+          // For CLOSE orders: Use 'debit' with price limit (buying back positions)
+          // 'debit' with price tells Tradier: "Pay up to $X to close, but no more"
+          // This provides price protection (limit order behavior) while satisfying Tradier's API
+          // CRITICAL: Using 'market' exposes system to unlimited slippage - always use 'debit' with price
           const orderType = proposal.side === 'OPEN' 
-            ? 'credit'  // Opening: assume credit spreads (premium selling)
-            : 'market'; // Closing: use market to avoid buying power calculation issues
+            ? 'credit'  // Opening: credit spreads (selling premium)
+            : 'debit';  // Closing: debit limit (buying back, max price protection)
 
-          // Build order payload - for market orders, don't include price
+          // Build order payload
           const orderPayload: any = {
             class: 'multileg',
             symbol: proposal.symbol,
@@ -701,9 +702,9 @@ export class GatekeeperDO {
             'quantity[]': quantities
           };
           
-          // Only include price for credit/debit/even types (limit orders)
-          // Market orders don't accept a price parameter
-          if (orderType !== 'market' && proposal.price !== undefined) {
+          // Always include price for credit/debit orders (limit order behavior)
+          // This ensures we don't pay more than the limit price when closing
+          if (proposal.price !== undefined) {
             orderPayload.price = proposal.price;
           }
           
