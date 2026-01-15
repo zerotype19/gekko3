@@ -1519,10 +1519,12 @@ class MarketFeed:
                                 if isinstance(series_data, dict):
                                     series_data = [series_data]
                                 
-                                # Parse candles from timesales format
+                                # Parse TICKS from timesales format and aggregate into candles
+                                # Timesales returns: time, timestamp, price, size (NOT open/high/low/close)
+                                tick_rows = []
                                 for data_point in series_data:
                                     try:
-                                        # Timesales format: time (ISO), timestamp (Unix), price, open, high, low, close, volume, vwap
+                                        # Parse timestamp
                                         timestamp_str = data_point.get('time') or data_point.get('timestamp')
                                         
                                         if timestamp_str:
@@ -1543,25 +1545,49 @@ class MarketFeed:
                                         else:
                                             continue
                                         
-                                        # Validate price data
-                                        open_price = float(data_point.get('open', 0))
-                                        high_price = float(data_point.get('high', 0))
-                                        low_price = float(data_point.get('low', 0))
-                                        close_price = float(data_point.get('close', 0))
-                                        volume = int(data_point.get('volume', 0))
+                                        # Timesales format: 'price' (trade price) and 'size' (volume)
+                                        price = float(data_point.get('price', 0))
+                                        size = int(data_point.get('size', 0))
                                         
-                                        if open_price > 0 and high_price > 0 and low_price > 0 and close_price > 0:
-                                            all_candle_rows.append({
+                                        if price > 0 and size > 0:
+                                            tick_rows.append({
                                                 'timestamp': timestamp,
-                                                'open': open_price,
-                                                'high': high_price,
-                                                'low': low_price,
-                                                'close': close_price,
-                                                'volume': volume
+                                                'price': price,
+                                                'volume': size
                                             })
                                     except Exception as e:
-                                        logging.debug(f"⚠️ Failed to parse data point for {symbol}: {e}")
+                                        logging.debug(f"⚠️ Failed to parse tick for {symbol}: {e}")
                                         continue
+                                
+                                # Aggregate ticks into 1-minute candles using Pandas
+                                if tick_rows:
+                                    import pandas as pd
+                                    ticks_df = pd.DataFrame(tick_rows)
+                                    ticks_df['timestamp'] = pd.to_datetime(ticks_df['timestamp'])
+                                    ticks_df = ticks_df.set_index('timestamp')
+                                    
+                                    # Resample to 1-minute candles
+                                    # OHLC from price, sum volume
+                                    ohlc = ticks_df['price'].resample('1min').ohlc()
+                                    volume = ticks_df['volume'].resample('1min').sum()
+                                    
+                                    # Combine OHLC and volume
+                                    candles_df = pd.concat([ohlc, volume], axis=1)
+                                    candles_df.columns = ['open', 'high', 'low', 'close', 'volume']
+                                    candles_df = candles_df.dropna()  # Remove any NaN rows
+                                    candles_df = candles_df.reset_index()
+                                    candles_df.rename(columns={'timestamp': 'timestamp'}, inplace=True)
+                                    
+                                    # Convert to list of dicts for appending
+                                    for _, row in candles_df.iterrows():
+                                        all_candle_rows.append({
+                                            'timestamp': row['timestamp'].to_pydatetime() if isinstance(row['timestamp'], pd.Timestamp) else row['timestamp'],
+                                            'open': float(row['open']),
+                                            'high': float(row['high']),
+                                            'low': float(row['low']),
+                                            'close': float(row['close']),
+                                            'volume': int(row['volume'])
+                                        })
                             elif resp.status == 400:
                                 # API might reject requests for future dates or weekends
                                 logging.debug(f"⚠️ Timesales request rejected for {symbol} on {day_date.date()}: {resp.status}")

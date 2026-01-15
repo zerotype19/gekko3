@@ -1,5 +1,5 @@
 {
-  "DIA_CREDIT_SPREAD_RECOVERED_1768497982": {
+  "DIA_CREDIT_SPREAD_RECOVERED_1768498431": {
     "symbol": "DIA",
     "strategy": "CREDIT_SPREAD",
     "legs": [
@@ -22,10 +22,10 @@
     ],
     "entry_price": 6.22,
     "bias": "bullish",
-    "timestamp": "2026-01-15T12:26:22.687980",
+    "timestamp": "2026-01-15T12:33:51.260918",
     "highest_pnl": -100.0
   },
-  "IWM_MANUAL_RECOVERY_RECOVERED_1768497982": {
+  "IWM_MANUAL_RECOVERY_RECOVERED_1768498431": {
     "symbol": "IWM",
     "strategy": "MANUAL_RECOVERY",
     "legs": [
@@ -96,10 +96,10 @@
     ],
     "entry_price": 72.98,
     "bias": "neutral",
-    "timestamp": "2026-01-15T12:26:22.688022",
+    "timestamp": "2026-01-15T12:33:51.260959",
     "highest_pnl": -100.0
   },
-  "QQQ_IRON_BUTTERFLY_RECOVERED_1768497982": {
+  "QQQ_IRON_BUTTERFLY_RECOVERED_1768498431": {
     "symbol": "QQQ",
     "strategy": "IRON_BUTTERFLY",
     "legs": [
@@ -138,10 +138,10 @@
     ],
     "entry_price": 22.22,
     "bias": "neutral",
-    "timestamp": "2026-01-15T12:26:22.688054",
+    "timestamp": "2026-01-15T12:33:51.260992",
     "highest_pnl": -100.0
   },
-  "SPY_CREDIT_SPREAD_RECOVERED_1768497982": {
+  "SPY_CREDIT_SPREAD_RECOVERED_1768498431": {
     "symbol": "SPY",
     "strategy": "CREDIT_SPREAD",
     "legs": [
@@ -164,36 +164,7 @@
     ],
     "entry_price": 11.04,
     "bias": "bullish",
-    "timestamp": "2026-01-15T12:26:22.688073",
-    "highest_pnl": -100.0
-  },
-  "QQQ_RATIO_SPREAD_1768498208": {
-    "symbol": "QQQ",
-    "strategy": "RATIO_SPREAD",
-    "status": "OPENING",
-    "open_order_id": "24371769",
-    "opening_timestamp": "2026-01-15T12:30:08.972056",
-    "legs": [
-      {
-        "symbol": "QQQ260213P00612000",
-        "expiration": "2026-02-13",
-        "strike": 612.0,
-        "type": "PUT",
-        "quantity": 1,
-        "side": "SELL"
-      },
-      {
-        "symbol": "QQQ260213P00585000",
-        "expiration": "2026-02-13",
-        "strike": 585.0,
-        "type": "PUT",
-        "quantity": 2,
-        "side": "BUY"
-      }
-    ],
-    "entry_price": 1.44,
-    "bias": "bearish",
-    "timestamp": "2026-01-15T12:30:08.972066",
+    "timestamp": "2026-01-15T12:33:51.261013",
     "highest_pnl": -100.0
   }
 }
