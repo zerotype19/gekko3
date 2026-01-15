@@ -192,7 +192,10 @@ export class TradierClient {
     body.append('type', orderPayload.type);
     body.append('duration', orderPayload.duration);
     
-    if (orderPayload.price !== undefined) {
+    // CRITICAL FIX: Only append price for non-market orders
+    // Market orders cannot have a price parameter (Tradier will reject "Invalid Parameter")
+    // Defense-in-depth: Even if GatekeeperDO passes price for market orders, we filter it here
+    if (orderPayload.type !== 'market' && orderPayload.price !== undefined) {
       body.append('price', orderPayload.price.toFixed(2));
     }
 
