@@ -1575,8 +1575,102 @@ class MarketFeed:
             import traceback
             traceback.print_exc()
 
+    async def _cancel_pending_closes_for_symbol(self, symbol: str) -> int:
+        """
+        Cancel any pending closing orders for a specific symbol.
+        This prevents rejection loops when trying to send a new close order
+        while an old one is still pending.
+        
+        Returns: Number of orders cancelled
+        """
+        if not self.account_id:
+            await self._fetch_account_id()
+        if not self.account_id:
+            return 0
+        
+        # Fetch all open/pending orders from Tradier
+        sandbox_api_base = "https://sandbox.tradier.com/v1"
+        headers = {'Authorization': f'Bearer {self.sandbox_token}', 'Accept': 'application/json'}
+        url = f"{sandbox_api_base}/accounts/{self.account_id}/orders"
+        params = {'status': 'open,pending'}
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, params=params) as resp:
+                    if resp.status != 200:
+                        return 0
+                    
+                    data = await resp.json()
+                    orders = data.get('orders', {}).get('order', [])
+                    if orders == 'null' or not orders:
+                        orders = []
+                    
+                    order_list = orders if isinstance(orders, list) else [orders]
+                    cancelled_count = 0
+                    
+                    for order in order_list:
+                        order_id = order.get('id')
+                        order_status = order.get('status', '').lower()
+                        
+                        # Check if this is a closing order for our symbol
+                        is_closing = False
+                        order_symbol = None
+                        
+                        # For multileg orders, check legs
+                        legs = order.get('leg', [])
+                        if legs:
+                            leg_list = legs if isinstance(legs, list) else [legs]
+                            for leg in leg_list:
+                                side = leg.get('side', '').lower()
+                                option_symbol = leg.get('option_symbol', '')
+                                
+                                if option_symbol:
+                                    match = re.match(r'^([A-Z]+)', option_symbol)
+                                    if match:
+                                        order_symbol = match.group(1)
+                                
+                                if side in ['buy_to_close', 'sell_to_close']:
+                                    is_closing = True
+                                    break
+                        else:
+                            # Single leg order
+                            side = order.get('side', '').lower()
+                            option_symbol = order.get('option_symbol', '')
+                            
+                            if option_symbol:
+                                match = re.match(r'^([A-Z]+)', option_symbol)
+                                if match:
+                                    order_symbol = match.group(1)
+                            
+                            if side in ['buy_to_close', 'sell_to_close']:
+                                is_closing = True
+                        
+                        # Cancel if it's a closing order for our symbol
+                        if is_closing and order_symbol == symbol and order_status in ['open', 'pending']:
+                            logging.info(f"🧹 Cancelling pending CLOSE order {order_id} for {symbol} before sending new close")
+                            cancel_success = await self._cancel_order(str(order_id))
+                            if cancel_success:
+                                cancelled_count += 1
+                                # Wait a moment for cancellation to process
+                                await asyncio.sleep(1)
+                    
+                    return cancelled_count
+        except Exception as e:
+            logging.error(f"❌ Error cancelling pending closes for {symbol}: {e}")
+            return 0
+
     async def _execute_close(self, trade_id: str, pos: Dict, limit_price: float):
         """Send CLOSE order and track it - uses ACTUAL Tradier positions for quantities"""
+        symbol = pos.get('symbol', '')
+        
+        # CRITICAL: Cancel any pending closing orders for this symbol BEFORE sending new order
+        # This prevents instant rejection when trying to close a position that already has a pending close order
+        cancelled_count = await self._cancel_pending_closes_for_symbol(symbol)
+        if cancelled_count > 0:
+            logging.info(f"✅ Cancelled {cancelled_count} pending close order(s) for {symbol} before sending new close")
+            # Wait a moment for cancellations to process
+            await asyncio.sleep(1)
+        
         # CRITICAL: Fetch actual positions from Tradier to get correct quantities
         # Recovered positions may have wrong quantities if partially filled or adjusted
         actual_positions = await self._get_actual_positions()
