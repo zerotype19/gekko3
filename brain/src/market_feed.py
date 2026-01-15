@@ -1459,18 +1459,30 @@ class MarketFeed:
                                 try:
                                     data = await resp.json()
                                     if data is None:
-                                        logging.debug(f"⚠️ Empty response for {symbol} on {day_date.date()}")
+                                        # Check if response body is empty
+                                        text = await resp.text()
+                                        logging.debug(f"⚠️ Empty JSON response for {symbol} on {day_date.date()}, body: {text[:100]}")
                                         continue
                                 except Exception as json_err:
-                                    logging.debug(f"⚠️ JSON parse error for {symbol} on {day_date.date()}: {json_err}")
+                                    # Try to get the raw response text for debugging
+                                    try:
+                                        text = await resp.text()
+                                        logging.debug(f"⚠️ JSON parse error for {symbol} on {day_date.date()}: {json_err}, body: {text[:200]}")
+                                    except:
+                                        logging.debug(f"⚠️ JSON parse error for {symbol} on {day_date.date()}: {json_err}")
                                     continue
                                 
                                 # Timesales endpoint returns: series.data (array of data points)
                                 if not isinstance(data, dict):
-                                    logging.debug(f"⚠️ Unexpected response format for {symbol} on {day_date.date()}: {type(data)}")
+                                    logging.debug(f"⚠️ Unexpected response format for {symbol} on {day_date.date()}: {type(data)}, data: {str(data)[:100]}")
                                     continue
                                 
                                 series_data = data.get('series', {}).get('data', [])
+                                
+                                # If no data, check if there's an error message
+                                if not series_data and 'fault' in data:
+                                    logging.debug(f"⚠️ API fault for {symbol} on {day_date.date()}: {data.get('fault', {})}")
+                                    continue
                                 
                                 if not series_data:
                                     continue
