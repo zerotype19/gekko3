@@ -369,6 +369,7 @@ class MarketFeed:
         """Background task to monitor and manage open positions"""
         logging.info("🛡️ Position Manager: ONLINE")
         last_status_log = datetime.now()
+        last_reconciliation = datetime.now()
         
         # Ensure account ID is ready
         await self._fetch_account_id()
@@ -383,6 +384,14 @@ class MarketFeed:
                 else:
                     await asyncio.sleep(30)
                     continue
+                
+                # Periodic Reconciliation: Every 5 minutes, check Tradier positions
+                # This catches fills that were missed by order status checks
+                if (datetime.now() - last_reconciliation).total_seconds() >= 300:  # 5 minutes
+                    logging.info("🕵️ PERIODIC RECONCILIATION: Checking for missed fills...")
+                    await self._reconcile_fills()  # Lightweight fill check
+                    last_reconciliation = datetime.now()
+                    
             except Exception as e:
                 logging.error(f"⚠️ Manager Error: {e}")
                 import traceback
