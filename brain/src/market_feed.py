@@ -369,7 +369,7 @@ class MarketFeed:
         """Background task to monitor and manage open positions"""
         logging.info("🛡️ Position Manager: ONLINE")
         last_status_log = datetime.now()
-        last_reconciliation = datetime.now()
+        last_sync = datetime.now()
         
         # Ensure account ID is ready
         await self._fetch_account_id()
@@ -385,12 +385,12 @@ class MarketFeed:
                     await asyncio.sleep(30)
                     continue
                 
-                # Periodic Reconciliation: Every 5 minutes, check Tradier positions
-                # This catches fills that were missed by order status checks
-                if (datetime.now() - last_reconciliation).total_seconds() >= 300:  # 5 minutes
-                    logging.info("🕵️ PERIODIC RECONCILIATION: Checking for missed fills...")
-                    await self._reconcile_fills()  # Lightweight fill check
-                    last_reconciliation = datetime.now()
+                # Periodic Full Sync: Every 10 minutes, sync with Tradier
+                # This ensures Brain's state matches broker reality
+                if (datetime.now() - last_sync).total_seconds() >= 600:  # 10 minutes
+                    logging.info("🔄 PERIODIC SYNC: Syncing positions with Tradier...")
+                    await self.sync_positions_with_tradier()
+                    last_sync = datetime.now()
                     
             except Exception as e:
                 logging.error(f"⚠️ Manager Error: {e}")
