@@ -690,7 +690,11 @@ class MarketFeed:
                     continue
 
             # --- 3. EVALUATE OPEN POSITIONS (Risk Management) ---
-            # If we are here, status is 'OPEN'
+            # If we are here, status is 'OPEN' or None (recovered positions)
+            # Ensure status is set to OPEN if it's None (recovered positions)
+            if pos.get('status') is None:
+                pos['status'] = 'OPEN'
+            
             symbol = pos['symbol']
             cost_to_close = 0.0
             missing_quote = False
@@ -716,11 +720,14 @@ class MarketFeed:
                     trade_theta += quote_data['theta'] * 100 * qty
                     trade_vega += quote_data['vega'] * 100 * qty
             
+            # Always update live_greeks, even if missing_quote (will be 0, but at least it's set)
             pos['live_greeks'] = {'delta': trade_delta, 'theta': trade_theta, 'vega': trade_vega}
             
             if missing_quote: 
+                logging.debug(f"⚠️ Missing quotes for {trade_id}, skipping P&L calculation but Greeks updated")
                 continue
             if cost_to_close <= 0: 
+                logging.debug(f"⚠️ Invalid cost_to_close for {trade_id} (${cost_to_close:.2f}), skipping P&L calculation")
                 continue
             
             entry_credit = pos['entry_price']
