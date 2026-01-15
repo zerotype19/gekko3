@@ -831,6 +831,110 @@ class MarketFeed:
             logging.error(f"Failed to fetch actual positions: {e}")
         return {}
 
+    async def sync_positions_with_tradier(self):
+        """
+        Full Position Sync: Compare Brain's tracked positions with Tradier's actual positions
+        Runs every 10 minutes to ensure Brain's state matches broker reality.
+        - Updates OPENING positions that have filled
+        - Removes positions that no longer exist in Tradier (ghosts)
+        - Updates quantities to match actual Tradier positions
+        """
+        logging.info("🔄 SYNC: Starting full position sync with Tradier...")
+        
+        if not self.account_id:
+            await self._fetch_account_id()
+        if not self.account_id:
+            logging.warning("⚠️ Cannot sync: Account ID not available")
+            return
+        
+        try:
+            # Fetch all positions from Tradier
+            actual_positions = await self._get_actual_positions()
+            if not actual_positions:
+                logging.warning("⚠️ Sync: No positions found in Tradier (or API failed)")
+                return
+            
+            logging.info(f"📊 Tradier has {len(actual_positions)} position(s)")
+            
+            # Build set of Tradier position symbols
+            tradier_symbols = set(actual_positions.keys())
+            
+            # Build set of Brain position symbols (from all legs)
+            brain_symbols = set()
+            for trade_id, pos in self.open_positions.items():
+                for leg in pos.get('legs', []):
+                    leg_symbol = leg.get('symbol')
+                    if leg_symbol:
+                        brain_symbols.add(leg_symbol)
+            
+            now = datetime.now()
+            updated_count = 0
+            removed_count = 0
+            
+            # 1. Check OPENING positions - see if they've filled
+            for trade_id, pos in list(self.open_positions.items()):
+                if pos.get('status') == 'OPENING':
+                    leg_symbols = [leg.get('symbol') for leg in pos.get('legs', [])]
+                    found_legs = [sym for sym in leg_symbols if sym in tradier_symbols]
+                    
+                    if found_legs:
+                        # Position has filled!
+                        logging.info(f"✅ SYNC: {trade_id} has filled ({len(found_legs)}/{len(leg_symbols)} legs in Tradier)")
+                        pos['status'] = 'OPEN'
+                        pos['timestamp'] = now
+                        
+                        # Update quantities from actual positions
+                        for leg in pos.get('legs', []):
+                            leg_symbol = leg.get('symbol')
+                            actual_pos = actual_positions.get(leg_symbol)
+                            if actual_pos:
+                                actual_qty = abs(float(actual_pos.get('quantity', 0)))
+                                if actual_qty > 0:
+                                    leg['quantity'] = int(actual_qty)
+                        
+                        updated_count += 1
+            
+            # 2. Remove ghosts (in Brain but not in Tradier)
+            ghosts = brain_symbols - tradier_symbols
+            if ghosts:
+                logging.info(f"👻 SYNC: Found {len(ghosts)} ghost position(s) (closed in Tradier)")
+                to_remove = []
+                for trade_id, pos in list(self.open_positions.items()):
+                    pos_symbols = {leg.get('symbol') for leg in pos.get('legs', [])}
+                    # If ALL legs are ghosts, remove the position
+                    if pos_symbols and pos_symbols.issubset(ghosts):
+                        logging.info(f"🗑️ SYNC: Removing ghost position: {trade_id}")
+                        to_remove.append(trade_id)
+                
+                for trade_id in to_remove:
+                    del self.open_positions[trade_id]
+                    removed_count += len(to_remove)
+            
+            # 3. Update quantities for existing OPEN positions
+            for trade_id, pos in self.open_positions.items():
+                if pos.get('status') == 'OPEN':
+                    for leg in pos.get('legs', []):
+                        leg_symbol = leg.get('symbol')
+                        actual_pos = actual_positions.get(leg_symbol)
+                        if actual_pos:
+                            actual_qty = abs(float(actual_pos.get('quantity', 0)))
+                            if actual_qty > 0 and actual_qty != leg.get('quantity', 0):
+                                old_qty = leg.get('quantity', 0)
+                                leg['quantity'] = int(actual_qty)
+                                logging.info(f"📝 SYNC: Updated {leg_symbol} quantity: {old_qty} -> {actual_qty}")
+            
+            # Save changes
+            if updated_count > 0 or removed_count > 0:
+                self._save_positions_to_disk()
+                logging.info(f"💾 SYNC: Saved {updated_count} updated, {removed_count} removed position(s)")
+            
+            logging.info(f"✅ SYNC COMPLETE: {updated_count} updated, {removed_count} removed, {len(self.open_positions)} total tracked")
+            
+        except Exception as e:
+            logging.error(f"❌ Sync failed: {e}")
+            import traceback
+            traceback.print_exc()
+
     async def _reconcile_fills(self):
         """
         Lightweight reconciliation: Check if OPENING positions have actually filled
