@@ -1,5 +1,31 @@
 {
-  "IWM_MANUAL_RECOVERY_RECOVERED_1768489079": {
+  "DIA_CREDIT_SPREAD_RECOVERED_1768489366": {
+    "symbol": "DIA",
+    "strategy": "CREDIT_SPREAD",
+    "legs": [
+      {
+        "symbol": "DIA260213P00466000",
+        "expiration": "2026-02-13",
+        "strike": 466.0,
+        "type": "PUT",
+        "quantity": 2,
+        "side": "BUY"
+      },
+      {
+        "symbol": "DIA260213P00482000",
+        "expiration": "2026-02-13",
+        "strike": 482.0,
+        "type": "PUT",
+        "quantity": 1,
+        "side": "SELL"
+      }
+    ],
+    "entry_price": 6.22,
+    "bias": "bullish",
+    "timestamp": "2026-01-15T10:02:46.885651",
+    "highest_pnl": -100.0
+  },
+  "IWM_MANUAL_RECOVERY_RECOVERED_1768489366": {
     "symbol": "IWM",
     "strategy": "MANUAL_RECOVERY",
     "legs": [
@@ -54,10 +80,10 @@
     ],
     "entry_price": 61.6,
     "bias": "neutral",
-    "timestamp": "2026-01-15T09:57:59.226366",
+    "timestamp": "2026-01-15T10:02:46.885662",
     "highest_pnl": -100.0
   },
-  "QQQ_CREDIT_SPREAD_RECOVERED_1768489079": {
+  "QQQ_CREDIT_SPREAD_RECOVERED_1768489366": {
     "symbol": "QQQ",
     "strategy": "CREDIT_SPREAD",
     "legs": [
@@ -80,7 +106,7 @@
     ],
     "entry_price": 9.99,
     "bias": "bullish",
-    "timestamp": "2026-01-15T09:57:59.226405",
+    "timestamp": "2026-01-15T10:02:46.885668",
     "highest_pnl": -100.0
   }
 }
