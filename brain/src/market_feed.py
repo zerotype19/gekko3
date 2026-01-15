@@ -1417,10 +1417,12 @@ class MarketFeed:
         """
         Fast Start: Fetch historical candles from Tradier to populate indicators instantly.
         This eliminates the 3+ hour warm-up period by loading the last 5 days of 1-minute data.
+        
+        Uses Tradier's /markets/timesales endpoint for 1-minute data (history endpoint only supports daily/weekly/monthly).
         """
         logging.info("🔥 WARM-UP: Fetching historical candles for instant indicator readiness...")
         
-        # Calculate date range (last 5 days)
+        # Calculate date range (last 5 days, but fetch each day separately due to API limits)
         end_date = datetime.now()
         start_date = end_date - timedelta(days=5)
         
@@ -1428,86 +1430,105 @@ class MarketFeed:
         
         for symbol in self.symbols:
             try:
-                url = f'{TRADIER_API_BASE}/markets/history'
-                params = {
-                    'symbol': symbol,
-                    'interval': '1min',
-                    'start': start_date.strftime('%Y-%m-%d'),
-                    'end': end_date.strftime('%Y-%m-%d')
-                }
+                # Use timesales endpoint for 1-minute data (history endpoint doesn't support 1min)
+                url = f'{TRADIER_API_BASE}/markets/timesales'
                 
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url, headers=headers, params=params) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            candles_data = data.get('history', {}).get('day', [])
-                            
-                            if not candles_data:
-                                logging.warning(f"⚠️ No historical data for {symbol}")
-                                continue
-                            
-                            # Convert Tradier format to DataFrame
-                            # Tradier returns nested structure: history.day or history.minute depending on interval
-                            # For 1min interval, it should be history.minute
-                            minute_data = data.get('history', {}).get('minute', [])
-                            if not minute_data and candles_data:
-                                # Fallback: if minute data not available, use day data (less granular but better than nothing)
-                                minute_data = candles_data
-                            
-                            if isinstance(minute_data, dict):
-                                minute_data = [minute_data]
-                            
-                            # Parse candles
-                            candle_rows = []
-                            for candle in minute_data:
-                                try:
-                                    # Tradier minute bars: date (YYYY-MM-DD HH:MM:SS), open, high, low, close, volume
-                                    timestamp_str = candle.get('date') or candle.get('time')
-                                    if timestamp_str:
-                                        try:
-                                            # Parse Tradier's date format: "2026-01-15 09:30:00"
-                                            if isinstance(timestamp_str, (int, float)):
-                                                timestamp = datetime.fromtimestamp(timestamp_str)
-                                            elif 'T' in str(timestamp_str):
-                                                timestamp = datetime.fromisoformat(str(timestamp_str).replace('Z', '+00:00'))
-                                            else:
-                                                # Format: "2026-01-15 09:30:00"
-                                                timestamp = datetime.strptime(str(timestamp_str), '%Y-%m-%d %H:%M:%S')
-                                        except Exception as parse_err:
-                                            logging.debug(f"Timestamp parse error for {symbol}: {parse_err}, using now()")
-                                            timestamp = datetime.now()
-                                    else:
-                                        timestamp = datetime.now()
-                                    
-                                    # Validate price data
-                                    open_price = float(candle.get('open', 0))
-                                    high_price = float(candle.get('high', 0))
-                                    low_price = float(candle.get('low', 0))
-                                    close_price = float(candle.get('close', 0))
-                                    volume = int(candle.get('volume', 0))
-                                    
-                                    if open_price > 0 and high_price > 0 and low_price > 0 and close_price > 0:
-                                        candle_rows.append({
-                                            'timestamp': timestamp,
-                                            'open': open_price,
-                                            'high': high_price,
-                                            'low': low_price,
-                                            'close': close_price,
-                                            'volume': volume
-                                        })
-                                except Exception as e:
-                                    logging.debug(f"⚠️ Failed to parse candle for {symbol}: {e}")
+                # Fetch data for each day (API may limit date range)
+                all_candle_rows = []
+                
+                for day_offset in range(5):
+                    day_date = end_date - timedelta(days=day_offset)
+                    # Market hours: 9:30 AM - 4:00 PM ET
+                    day_start = day_date.replace(hour=9, minute=30, second=0, microsecond=0)
+                    day_end = day_date.replace(hour=16, minute=0, second=0, microsecond=0)
+                    
+                    # Skip if future date
+                    if day_start > end_date:
+                        continue
+                    
+                    params = {
+                        'symbol': symbol,
+                        'interval': '1min',
+                        'start': day_start.strftime('%Y-%m-%dT%H:%M:%S'),
+                        'end': min(day_end, end_date).strftime('%Y-%m-%dT%H:%M:%S')
+                    }
+                    
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(url, headers=headers, params=params) as resp:
+                            if resp.status == 200:
+                                data = await resp.json()
+                                # Timesales endpoint returns: series.data (array of data points)
+                                series_data = data.get('series', {}).get('data', [])
+                                
+                                if not series_data:
                                     continue
-                            
-                            if candle_rows:
-                                import pandas as pd
-                                candles_df = pd.DataFrame(candle_rows)
-                                self.alpha_engine.load_history(symbol, candles_df)
-                                logging.info(f"🔥 Warmed up {symbol} with {len(candle_rows)} candles")
+                                
+                                if isinstance(series_data, dict):
+                                    series_data = [series_data]
+                                
+                                # Parse candles from timesales format
+                                for data_point in series_data:
+                                    try:
+                                        # Timesales format: time (ISO), timestamp (Unix), price, open, high, low, close, volume, vwap
+                                        timestamp_str = data_point.get('time') or data_point.get('timestamp')
+                                        
+                                        if timestamp_str:
+                                            try:
+                                                if isinstance(timestamp_str, (int, float)):
+                                                    timestamp = datetime.fromtimestamp(timestamp_str)
+                                                elif 'T' in str(timestamp_str):
+                                                    # ISO format: "2026-01-15T09:30:00"
+                                                    timestamp = datetime.fromisoformat(str(timestamp_str).replace('Z', '+00:00'))
+                                                    # Remove timezone if present
+                                                    if timestamp.tzinfo:
+                                                        timestamp = timestamp.replace(tzinfo=None)
+                                                else:
+                                                    timestamp = datetime.strptime(str(timestamp_str), '%Y-%m-%d %H:%M:%S')
+                                            except Exception as parse_err:
+                                                logging.debug(f"Timestamp parse error for {symbol}: {parse_err}")
+                                                continue
+                                        else:
+                                            continue
+                                        
+                                        # Validate price data
+                                        open_price = float(data_point.get('open', 0))
+                                        high_price = float(data_point.get('high', 0))
+                                        low_price = float(data_point.get('low', 0))
+                                        close_price = float(data_point.get('close', 0))
+                                        volume = int(data_point.get('volume', 0))
+                                        
+                                        if open_price > 0 and high_price > 0 and low_price > 0 and close_price > 0:
+                                            all_candle_rows.append({
+                                                'timestamp': timestamp,
+                                                'open': open_price,
+                                                'high': high_price,
+                                                'low': low_price,
+                                                'close': close_price,
+                                                'volume': volume
+                                            })
+                                    except Exception as e:
+                                        logging.debug(f"⚠️ Failed to parse data point for {symbol}: {e}")
+                                        continue
+                            elif resp.status == 400:
+                                # API might reject requests for future dates or weekends
+                                logging.debug(f"⚠️ Timesales request rejected for {symbol} on {day_date.date()}: {resp.status}")
                             else:
-                                logging.warning(f"⚠️ No valid candles parsed for {symbol}")
-                        else:
-                            logging.warning(f"⚠️ Failed to fetch history for {symbol}: {resp.status}")
+                                logging.debug(f"⚠️ Timesales request failed for {symbol} on {day_date.date()}: {resp.status}")
+                
+                if all_candle_rows:
+                    # Sort by timestamp (oldest first)
+                    all_candle_rows.sort(key=lambda x: x['timestamp'])
+                    
+                    import pandas as pd
+                    candles_df = pd.DataFrame(all_candle_rows)
+                    self.alpha_engine.load_history(symbol, candles_df)
+                    logging.info(f"🔥 Warmed up {symbol} with {len(all_candle_rows)} candles")
+                else:
+                    logging.warning(f"⚠️ No valid candles fetched for {symbol} (may be weekend/non-trading day)")
+            except Exception as e:
+                logging.error(f"❌ Warm-up error for {symbol}: {e}")
+                import traceback
+                traceback.print_exc()
             except Exception as e:
                 logging.error(f"❌ Warm-up error for {symbol}: {e}")
                 import traceback
