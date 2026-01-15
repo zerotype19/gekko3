@@ -159,6 +159,64 @@ class AlphaEngine:
                 'pv_sum': price * volume
             }
 
+    def load_history(self, symbol: str, candles_df: pd.DataFrame):
+        """
+        Load historical candle data directly into the engine.
+        Used for warm-up to populate indicators instantly.
+        
+        Args:
+            symbol: Symbol to load data for
+            candles_df: DataFrame with columns [timestamp, open, high, low, close, volume]
+        """
+        if candles_df.empty:
+            return
+        
+        # Ensure timestamp is datetime
+        if not pd.api.types.is_datetime64_any_dtype(candles_df['timestamp']):
+            candles_df['timestamp'] = pd.to_datetime(candles_df['timestamp'])
+        
+        # Sort by timestamp (oldest first)
+        candles_df = candles_df.sort_values('timestamp').reset_index(drop=True)
+        
+        # Trim to lookback window
+        if len(candles_df) > 0:
+            cutoff_time = candles_df['timestamp'].iloc[-1] - timedelta(minutes=self.lookback_minutes)
+            candles_df = candles_df[candles_df['timestamp'] >= cutoff_time].reset_index(drop=True)
+        
+        # Replace or append to existing candles
+        if self.candles[symbol].empty:
+            self.candles[symbol] = candles_df
+        else:
+            # Merge with existing, avoiding duplicates
+            combined = pd.concat([self.candles[symbol], candles_df], ignore_index=True)
+            combined = combined.drop_duplicates(subset=['timestamp'], keep='last')
+            combined = combined.sort_values('timestamp').reset_index(drop=True)
+            # Trim to lookback
+            if len(combined) > 0:
+                cutoff_time = combined['timestamp'].iloc[-1] - timedelta(minutes=self.lookback_minutes)
+                combined = combined[combined['timestamp'] >= cutoff_time].reset_index(drop=True)
+            self.candles[symbol] = combined
+        
+        # Update session metrics from loaded data
+        if not candles_df.empty:
+            last_candle = candles_df.iloc[-1]
+            last_timestamp = last_candle['timestamp']
+            if isinstance(last_timestamp, pd.Timestamp):
+                last_timestamp = last_timestamp.to_pydatetime()
+            
+            # Initialize session if needed
+            if self.session_start is None:
+                self.session_start = self._get_session_start(last_timestamp)
+            
+            # Calculate session VWAP from loaded data
+            session_start = self._get_session_start(last_timestamp)
+            session_candles = candles_df[candles_df['timestamp'] >= session_start]
+            if not session_candles.empty:
+                self.session_pv[symbol] = (session_candles['close'] * session_candles['volume']).sum()
+                self.session_volume[symbol] = session_candles['volume'].sum()
+                if self.session_volume[symbol] > 0:
+                    self.session_vwap[symbol] = self.session_pv[symbol] / self.session_volume[symbol]
+
     def _close_bar(self, symbol: str, timestamp: datetime):
         """Close the current 1-minute bar and add to candles DataFrame"""
         bar = self.current_bars[symbol]

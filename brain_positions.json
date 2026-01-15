@@ -108,5 +108,63 @@
     "bias": "bullish",
     "timestamp": "2026-01-15T11:26:23.396385",
     "highest_pnl": -100.0
+  },
+  "QQQ_RATIO_SPREAD_1768494602": {
+    "symbol": "QQQ",
+    "strategy": "RATIO_SPREAD",
+    "status": "OPEN",
+    "open_order_id": "24359070",
+    "opening_timestamp": "2026-01-15T11:30:02.759284",
+    "legs": [
+      {
+        "symbol": "QQQ260213P00611000",
+        "expiration": "2026-02-13",
+        "strike": 611.0,
+        "type": "PUT",
+        "quantity": 1,
+        "side": "SELL"
+      },
+      {
+        "symbol": "QQQ260213P00585000",
+        "expiration": "2026-02-13",
+        "strike": 585.0,
+        "type": "PUT",
+        "quantity": 2,
+        "side": "BUY"
+      }
+    ],
+    "entry_price": 1.2,
+    "bias": "bearish",
+    "timestamp": "2026-01-15T11:36:25.240581",
+    "highest_pnl": -100.0
+  },
+  "SPY_RATIO_SPREAD_1768494605": {
+    "symbol": "SPY",
+    "strategy": "RATIO_SPREAD",
+    "status": "OPEN",
+    "open_order_id": "24359088",
+    "opening_timestamp": "2026-01-15T11:30:05.142081",
+    "legs": [
+      {
+        "symbol": "SPY260213P00683000",
+        "expiration": "2026-02-13",
+        "strike": 683.0,
+        "type": "PUT",
+        "quantity": 1,
+        "side": "SELL"
+      },
+      {
+        "symbol": "SPY260213P00663000",
+        "expiration": "2026-02-13",
+        "strike": 663.0,
+        "type": "PUT",
+        "quantity": 2,
+        "side": "BUY"
+      }
+    ],
+    "entry_price": 0.16,
+    "bias": "bearish",
+    "timestamp": "2026-01-15T11:36:25.240581",
+    "highest_pnl": -100.0
   }
 }

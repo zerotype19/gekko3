@@ -1413,6 +1413,108 @@ class MarketFeed:
             logging.error(f"Session error: {e}")
             return None
 
+    async def warm_up_history(self):
+        """
+        Fast Start: Fetch historical candles from Tradier to populate indicators instantly.
+        This eliminates the 3+ hour warm-up period by loading the last 5 days of 1-minute data.
+        """
+        logging.info("🔥 WARM-UP: Fetching historical candles for instant indicator readiness...")
+        
+        # Calculate date range (last 5 days)
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=5)
+        
+        headers = {'Authorization': f'Bearer {self.access_token}', 'Accept': 'application/json'}
+        
+        for symbol in self.symbols:
+            try:
+                url = f'{TRADIER_API_BASE}/markets/history'
+                params = {
+                    'symbol': symbol,
+                    'interval': '1min',
+                    'start': start_date.strftime('%Y-%m-%d'),
+                    'end': end_date.strftime('%Y-%m-%d')
+                }
+                
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, headers=headers, params=params) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            candles_data = data.get('history', {}).get('day', [])
+                            
+                            if not candles_data:
+                                logging.warning(f"⚠️ No historical data for {symbol}")
+                                continue
+                            
+                            # Convert Tradier format to DataFrame
+                            # Tradier returns nested structure: history.day or history.minute depending on interval
+                            # For 1min interval, it should be history.minute
+                            minute_data = data.get('history', {}).get('minute', [])
+                            if not minute_data and candles_data:
+                                # Fallback: if minute data not available, use day data (less granular but better than nothing)
+                                minute_data = candles_data
+                            
+                            if isinstance(minute_data, dict):
+                                minute_data = [minute_data]
+                            
+                            # Parse candles
+                            candle_rows = []
+                            for candle in minute_data:
+                                try:
+                                    # Tradier minute bars: date (YYYY-MM-DD HH:MM:SS), open, high, low, close, volume
+                                    timestamp_str = candle.get('date') or candle.get('time')
+                                    if timestamp_str:
+                                        try:
+                                            # Parse Tradier's date format: "2026-01-15 09:30:00"
+                                            if isinstance(timestamp_str, (int, float)):
+                                                timestamp = datetime.fromtimestamp(timestamp_str)
+                                            elif 'T' in str(timestamp_str):
+                                                timestamp = datetime.fromisoformat(str(timestamp_str).replace('Z', '+00:00'))
+                                            else:
+                                                # Format: "2026-01-15 09:30:00"
+                                                timestamp = datetime.strptime(str(timestamp_str), '%Y-%m-%d %H:%M:%S')
+                                        except Exception as parse_err:
+                                            logging.debug(f"Timestamp parse error for {symbol}: {parse_err}, using now()")
+                                            timestamp = datetime.now()
+                                    else:
+                                        timestamp = datetime.now()
+                                    
+                                    # Validate price data
+                                    open_price = float(candle.get('open', 0))
+                                    high_price = float(candle.get('high', 0))
+                                    low_price = float(candle.get('low', 0))
+                                    close_price = float(candle.get('close', 0))
+                                    volume = int(candle.get('volume', 0))
+                                    
+                                    if open_price > 0 and high_price > 0 and low_price > 0 and close_price > 0:
+                                        candle_rows.append({
+                                            'timestamp': timestamp,
+                                            'open': open_price,
+                                            'high': high_price,
+                                            'low': low_price,
+                                            'close': close_price,
+                                            'volume': volume
+                                        })
+                                except Exception as e:
+                                    logging.debug(f"⚠️ Failed to parse candle for {symbol}: {e}")
+                                    continue
+                            
+                            if candle_rows:
+                                import pandas as pd
+                                candles_df = pd.DataFrame(candle_rows)
+                                self.alpha_engine.load_history(symbol, candles_df)
+                                logging.info(f"🔥 Warmed up {symbol} with {len(candle_rows)} candles")
+                            else:
+                                logging.warning(f"⚠️ No valid candles parsed for {symbol}")
+                        else:
+                            logging.warning(f"⚠️ Failed to fetch history for {symbol}: {resp.status}")
+            except Exception as e:
+                logging.error(f"❌ Warm-up error for {symbol}: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        logging.info("✅ WARM-UP COMPLETE: Indicators ready for trading")
+
     async def connect(self):
         self.stop_signal = False
         while not self.stop_signal:
@@ -1423,6 +1525,9 @@ class MarketFeed:
                 continue
                 
             try:
+                # Fast Start: Warm up indicators with historical data
+                await self.warm_up_history()
+                
                 if not self.vix_poller_running:
                     self.vix_poller_task = asyncio.create_task(self._poll_vix_loop())
                 
@@ -2308,6 +2413,22 @@ class MarketFeed:
                 updated_leg['quantity'] = qty
             updated_legs.append(updated_leg)
         
+        # CRITICAL FIX: Recalculate net_price with updated quantities
+        # The original net_price was calculated with base quantities (qty=1)
+        # Now that we've scaled to actual qty, we need to recalculate the total
+        net_price_updated = 0.0
+        for leg in updated_legs:
+            quote_data = quotes.get(leg['symbol'])
+            if quote_data:
+                price = quote_data['price']
+                if leg['side'] == 'SELL':
+                    net_price_updated += price * leg['quantity']
+                else:
+                    net_price_updated -= price * leg['quantity']
+        
+        # Use the updated net_price (scaled to actual quantity)
+        limit_price = abs(net_price_updated)  # Gatekeeper expects positive limit price
+        
         # Construct Context
         context = {
             'vix': indicators.get('vix', 0),
@@ -2323,7 +2444,7 @@ class MarketFeed:
             'strategy': strategy,
             'side': side,
             'quantity': qty,  # Dynamic quantity based on risk
-            'price': round(limit_price, 2),
+            'price': round(limit_price, 2),  # Now correctly scaled to actual quantity
             'legs': updated_legs,  # Updated with dynamic quantities
             'context': context
         }
