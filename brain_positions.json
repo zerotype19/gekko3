@@ -1,5 +1,5 @@
 {
-  "IWM_IRON_CONDOR_RECOVERED_1768443556": {
+  "IWM_IRON_CONDOR_RECOVERED_1768488238": {
     "symbol": "IWM",
     "strategy": "IRON_CONDOR",
     "legs": [
@@ -38,7 +38,7 @@
     ],
     "entry_price": 51.62,
     "bias": "neutral",
-    "timestamp": "2026-01-14T21:19:16.744413",
+    "timestamp": "2026-01-15T09:43:58.606917",
     "highest_pnl": -100.0
   }
 }
