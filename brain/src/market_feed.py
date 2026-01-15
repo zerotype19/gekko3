@@ -1110,16 +1110,23 @@ class MarketFeed:
                             
                             # Build Brain leg format
                             brain_legs = []
-                            total_cost = 0.0
+                            net_credit = 0.0
                             for leg in legs:
                                 qty = float(leg['raw'].get('quantity', 0))
                                 cost_basis = float(leg['raw'].get('cost_basis', 0))
                                 side = "SELL" if qty < 0 else "BUY"
                                 
-                                if qty < 0:
-                                    total_cost += abs(cost_basis / qty) * abs(qty)
-                                else:
-                                    total_cost -= abs(cost_basis / qty) * qty
+                                # Calculate net credit/debit per leg
+                                # For SELL (qty < 0): cost_basis is negative (we received money)
+                                # For BUY (qty > 0): cost_basis is positive (we paid money)
+                                # Net credit = sum of (cost_basis / abs(qty)) for all legs
+                                # Negative cost_basis = credit received, positive = debit paid
+                                price_per_contract = cost_basis / abs(qty) if qty != 0 else 0
+                                
+                                if qty < 0:  # SELL leg (credit received)
+                                    net_credit += abs(price_per_contract) * abs(qty)
+                                else:  # BUY leg (debit paid)
+                                    net_credit -= abs(price_per_contract) * qty
                                 
                                 brain_legs.append({
                                     'symbol': leg['symbol'],
@@ -1135,7 +1142,10 @@ class MarketFeed:
                             if strategy == 'CREDIT_SPREAD' and len(legs) == 2:
                                 bias = 'bullish' if legs[0]['type'] == 'PUT' else 'bearish'
                             
-                            entry_price = abs(total_cost) / 100.0 if total_cost != 0 else 1.0
+                            # entry_price should be the net credit received (positive for credit spreads)
+                            # If net_credit is negative, it means we paid a debit (unusual for credit spreads)
+                            # Use absolute value and ensure minimum of $0.01
+                            entry_price = max(abs(net_credit), 0.01) if net_credit != 0 else 1.0
                             trade_id = f"{root}_{strategy}_RECOVERED_{int(datetime.now().timestamp())}"
                             
                             self.open_positions[trade_id] = {
@@ -1149,7 +1159,7 @@ class MarketFeed:
                                 "highest_pnl": -100.0
                             }
                             
-                            logging.info(f"✅ ADOPTED: {trade_id} ({strategy}, {len(legs)} legs, Entry: ${entry_price:.2f})")
+                            logging.info(f"✅ ADOPTED: {trade_id} ({strategy}, {len(legs)} legs, Entry: ${entry_price:.2f}, Net Credit: ${net_credit:.2f})")
                         
                         self._save_positions_to_disk()
                     
