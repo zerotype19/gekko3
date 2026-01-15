@@ -126,10 +126,12 @@ class MarketFeed:
                 data = json.load(f)
                 for k, v in data.items():
                     # Restore datetime objects
-                    if 'timestamp' in v:
+                    if 'timestamp' in v and isinstance(v['timestamp'], str):
                         v['timestamp'] = datetime.fromisoformat(v['timestamp'])
-                    if 'closing_timestamp' in v:
+                    if 'closing_timestamp' in v and isinstance(v['closing_timestamp'], str):
                         v['closing_timestamp'] = datetime.fromisoformat(v['closing_timestamp'])
+                    if 'opening_timestamp' in v and isinstance(v['opening_timestamp'], str):
+                        v['opening_timestamp'] = datetime.fromisoformat(v['opening_timestamp'])
                     self.open_positions[k] = v
                 if self.open_positions:
                     logging.info(f"♻️ Restored {len(self.open_positions)} positions from disk.")
@@ -149,7 +151,8 @@ class MarketFeed:
             'timestamp': datetime.now().isoformat(),
             'regime': regime,
             'portfolio_risk': self.portfolio_greeks,
-            'open_positions': len(self.open_positions),
+            # Count truly active positions (OPEN or CLOSING, exclude OPENING positions waiting for fill)
+            'open_positions': sum(1 for p in self.open_positions.values() if p.get('status') in ['OPEN', 'CLOSING']),
             'status': 'CONNECTED' if self.is_connected else 'DISCONNECTED'
         }
 
@@ -349,10 +352,12 @@ class MarketFeed:
         """
         Smart Manager 2.0: Advanced Exit Logic + Order Verification
         """
+        # Collect symbols for quotes (only for OPEN positions - CLOSING positions don't need quotes)
         all_legs = []
         for pos in self.open_positions.values():
-            for leg in pos['legs']:
-                all_legs.append(leg['symbol'])
+            if pos.get('status') == 'OPEN':
+                for leg in pos['legs']:
+                    all_legs.append(leg['symbol'])
         
         if not all_legs: 
             return
@@ -365,8 +370,44 @@ class MarketFeed:
         
         # Iterate over a COPY of items because we might modify dictionary
         for trade_id, pos in list(self.open_positions.items()):
-            
-            # --- 1. CHECK CLOSING ORDERS FIRST ---
+            status = pos.get('status', 'OPEN')
+
+            # --- 1. VERIFY ENTRY (The "Waiting Room") ---
+            if status == 'OPENING':
+                order_id = pos.get('open_order_id')
+                if not order_id:
+                    # Logic error, shouldn't happen unless manual intervention
+                    logging.error(f"❌ OPENING state with no Order ID for {trade_id}. Deleting.")
+                    del self.open_positions[trade_id]
+                    self._save_positions_to_disk()
+                    continue
+                
+                order_status = await self._get_order_status(order_id)
+                
+                if order_status == 'filled':
+                    logging.info(f"✅ ENTRY FILLED for {trade_id}. Tracking active position.")
+                    pos['status'] = 'OPEN'
+                    pos['timestamp'] = now  # Reset timer to fill time
+                    self._save_positions_to_disk()
+                
+                elif order_status in ['canceled', 'rejected', 'expired']:
+                    logging.warning(f"🚫 Entry Order {order_status} for {trade_id}. Removing from tracker.")
+                    del self.open_positions[trade_id]
+                    self._save_positions_to_disk()
+                
+                elif order_status in ['pending', 'open', 'partially_filled']:
+                    # Check timeout (5 mins)
+                    sent_time = pos.get('opening_timestamp')
+                    if sent_time and (now - sent_time).total_seconds() > 300:
+                        logging.info(f"⏳ Entry Order {order_id} pending > 5m. Cancelling.")
+                        await self._cancel_order(order_id)
+                        del self.open_positions[trade_id]
+                        self._save_positions_to_disk()
+                
+                continue  # Skip remaining logic for OPENING positions
+
+            # --- 2. VERIFY EXIT (Close & Verify) ---
+            if status == 'CLOSING':
             if pos.get('status') == 'CLOSING':
                 order_id = pos.get('close_order_id')
                 if not order_id:
@@ -466,7 +507,8 @@ class MarketFeed:
                     # Unknown status or API fail, wait for next loop
                     continue
 
-            # --- 2. EVALUATE OPEN POSITIONS ---
+            # --- 3. EVALUATE OPEN POSITIONS (Risk Management) ---
+            # If we are here, status is 'OPEN'
             symbol = pos['symbol']
             cost_to_close = 0.0
             missing_quote = False
@@ -1454,18 +1496,24 @@ class MarketFeed:
             # Extract order_id from response (may be in 'data' or top-level)
             order_id = response.get('order_id') or (response.get('data', {}).get('order_id') if isinstance(response.get('data'), dict) else None)
             trade_id = f"{symbol}_{strategy}_{int(datetime.now().timestamp())}"
-            self.open_positions[trade_id] = {
-                'symbol': symbol,
-                'strategy': strategy,
-                'legs': proposal['legs'],  # Contains the specific option symbols
-                'entry_price': proposal['price'],
-                'bias': bias,
-                'timestamp': datetime.now(),
-                'highest_pnl': -100.0,  # NEW: Initialize for Trailing Stop tracking
-                'status': 'OPEN'  # Track status: OPEN, CLOSING
-            }
-            logging.info(f"📝 Tracking Trade: {trade_id} | Order ID: {order_id}")
-            self._save_positions_to_disk()
+            
+            if order_id:
+                self.open_positions[trade_id] = {
+                    'symbol': symbol,
+                    'strategy': strategy,
+                    'status': 'OPENING',  # WAIT FOR FILL!
+                    'open_order_id': str(order_id),
+                    'opening_timestamp': datetime.now(),
+                    'legs': proposal['legs'],  # Contains the specific option symbols
+                    'entry_price': proposal['price'],
+                    'bias': bias,
+                    'timestamp': datetime.now(),
+                    'highest_pnl': -100.0  # Initialize for Trailing Stop tracking
+                }
+                logging.info(f"📝 Proposal Approved: {trade_id}. Waiting for Entry Fill (Order {order_id})...")
+                self._save_positions_to_disk()
+            else:
+                logging.error(f"❌ Approved but missing Order ID for {trade_id}. Response: {response}")
 
     async def _send_complex_proposal(self, symbol, strategy, side, legs, indicators, bias):
         """Send a pre-constructed multi-leg proposal"""
@@ -1516,15 +1564,21 @@ class MarketFeed:
             # Extract order_id from response (may be in 'data' or top-level)
             order_id = response.get('order_id') or (response.get('data', {}).get('order_id') if isinstance(response.get('data'), dict) else None)
             trade_id = f"{symbol}_{strategy}_{int(datetime.now().timestamp())}"
-            self.open_positions[trade_id] = {
-                'symbol': symbol,
-                'strategy': strategy,
-                'legs': legs,
-                'entry_price': round(limit_price, 2),
-                'bias': bias,
-                'timestamp': datetime.now(),
-                'highest_pnl': -100.0,
-                'status': 'OPEN'  # Track status: OPEN, CLOSING
-            }
-            logging.info(f"📝 Tracking Complex Trade: {trade_id} | Order ID: {order_id} | Total positions: {len(self.open_positions)}")
-            self._save_positions_to_disk()
+            
+            if order_id:
+                self.open_positions[trade_id] = {
+                    'symbol': symbol,
+                    'strategy': strategy,
+                    'status': 'OPENING',  # WAIT FOR FILL!
+                    'open_order_id': str(order_id),
+                    'opening_timestamp': datetime.now(),
+                    'legs': legs,
+                    'entry_price': round(limit_price, 2),
+                    'bias': bias,
+                    'timestamp': datetime.now(),
+                    'highest_pnl': -100.0
+                }
+                logging.info(f"📝 Complex Proposal Approved: {trade_id}. Waiting for Entry Fill (Order {order_id})...")
+                self._save_positions_to_disk()
+            else:
+                logging.error(f"❌ Approved but missing Order ID for {trade_id}. Response: {response}")
