@@ -215,7 +215,7 @@ for symbol, metrics in market_data.items():
                 }
             ))
             fig_rsi.update_layout(height=200, margin=dict(l=20,r=20,t=30,b=20))
-            st.plotly_chart(fig_rsi, width='stretch', key=f"rsi_gauge_{symbol}")
+            st.plotly_chart(fig_rsi, width='stretch', key=f"rsi_gauge_{symbol}", config={})
 
         with g2:
             # IV Rank Bar
