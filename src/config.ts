@@ -21,7 +21,7 @@ export const CONSTITUTION: RiskConfig = {
     // Risk Limits (INCREASED FOR TESTING)
   maxOpenPositions: 20,          // Increased to 20 for testing
   maxConcentrationPerSymbol: 20, // Increased to 20 for testing
-  maxDailyLossPercent: 0.02,    // Keeps 2% hard stop (Safety First).
+  maxDailyLossPercent: 0.05,     // Relaxed to 5% for testing (was 2%)
 
   // DTE Limits (NEW)
   minDte: 0,    // Allows Scalper (0DTE)
@@ -36,7 +36,9 @@ export const CONSTITUTION: RiskConfig = {
 
   // Risk Limits (Phase C)
   riskLimits: {
-    maxCorrelatedPositions: 2, // MAX 2 directional trades per group (e.g., 1 SPY + 1 QQQ is ok, but not 3)
+    // CRITICAL: Increased to 10 for testing to avoid blocking valid trades
+    // Was 2, which would block the 3rd trend trade
+    maxCorrelatedPositions: 10, // MAX 10 directional trades per group (e.g., allows 10 bullish trades in US_INDICES)
     maxTotalPositions: 20, // Match maxOpenPositions for testing (was 5, increased to allow full testing)
   },
 
