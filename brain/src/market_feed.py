@@ -89,6 +89,7 @@ class MarketFeed:
         # Position Management (Smart Manager)
         self.open_positions: Dict[str, Dict] = {}
         self.position_manager_task: Optional[asyncio.Task] = None
+        self._needs_entry_price_recalc = False  # Flag to force recalculation on first sync
         
         # Portfolio Greeks
         self.portfolio_greeks = {'delta': 0.0, 'theta': 0.0, 'vega': 0.0}
@@ -909,9 +910,10 @@ class MarketFeed:
                     del self.open_positions[trade_id]
                     removed_count += len(to_remove)
             
-            # 3. Update quantities for existing OPEN positions
+            # 3. Update quantities and recalculate entry_price for existing OPEN positions
             for trade_id, pos in self.open_positions.items():
                 if pos.get('status') == 'OPEN':
+                    # Update quantities
                     for leg in pos.get('legs', []):
                         leg_symbol = leg.get('symbol')
                         actual_pos = actual_positions.get(leg_symbol)
@@ -921,6 +923,15 @@ class MarketFeed:
                                 old_qty = leg.get('quantity', 0)
                                 leg['quantity'] = int(actual_qty)
                                 logging.info(f"📝 SYNC: Updated {leg_symbol} quantity: {old_qty} -> {actual_qty}")
+                    
+                    # Recalculate entry_price for MANUAL_RECOVERY positions (fix incorrect calculations)
+                    if pos.get('strategy') == 'MANUAL_RECOVERY':
+                        old_entry = pos.get('entry_price', 0)
+                        new_entry = await self._recalculate_entry_price_from_tradier(pos, actual_positions)
+                        if new_entry and new_entry > 0 and abs(new_entry - old_entry) > 0.01:
+                            logging.info(f"🔧 SYNC: Recalculated entry_price for {trade_id}: ${old_entry:.2f} -> ${new_entry:.2f}")
+                            pos['entry_price'] = round(new_entry, 2)
+                            updated_count += 1
             
             # Save changes
             if updated_count > 0 or removed_count > 0:
@@ -933,6 +944,52 @@ class MarketFeed:
             logging.error(f"❌ Sync failed: {e}")
             import traceback
             traceback.print_exc()
+
+    async def _recalculate_entry_price_from_tradier(self, pos: Dict, actual_positions: Dict) -> Optional[float]:
+        """
+        Recalculate entry_price for a position using Tradier's cost_basis data.
+        This fixes incorrect entry_price calculations for MANUAL_RECOVERY positions.
+        """
+        try:
+            net_credit = 0.0
+            legs_found = 0
+            
+            for leg in pos.get('legs', []):
+                leg_symbol = leg.get('symbol')
+                actual_pos = actual_positions.get(leg_symbol)
+                
+                if not actual_pos:
+                    continue
+                
+                legs_found += 1
+                qty = float(actual_pos.get('quantity', 0))  # Can be negative (short)
+                cost_basis = float(actual_pos.get('cost_basis', 0))
+                
+                # Calculate net credit/debit per leg
+                # For SELL (qty < 0): cost_basis is negative (we received money)
+                # For BUY (qty > 0): cost_basis is positive (we paid money)
+                price_per_contract = cost_basis / abs(qty) if qty != 0 else 0
+                
+                if qty < 0:  # SELL leg (credit received)
+                    net_credit += abs(price_per_contract) * abs(qty)
+                else:  # BUY leg (debit paid)
+                    net_credit -= abs(price_per_contract) * qty
+            
+            # Only recalculate if we found at least one leg
+            if legs_found == 0:
+                return None
+            
+            # entry_price should be the net credit received (positive for credit spreads)
+            if net_credit > 0:
+                return net_credit  # Credit received
+            elif net_credit < 0:
+                return abs(net_credit)  # Debit paid (convert to positive)
+            else:
+                return None  # Can't determine
+                
+        except Exception as e:
+            logging.error(f"Failed to recalculate entry_price: {e}")
+            return None
 
     async def _reconcile_fills(self):
         """
