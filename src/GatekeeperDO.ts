@@ -682,9 +682,12 @@ export class GatekeeperDO {
           }
 
           // Order Type Logic
-          // Default: Credit for Open, Debit for Close (Standard for Premium Selling)
-          // Ratio Spreads might be debit, but we assume "Credit Backspreads" for now based on strategy goals.
-          const orderType = proposal.side === 'OPEN' ? 'credit' : 'debit';
+          // For OPEN orders: Use 'credit' or 'debit' based on net premium
+          // For CLOSE orders: Use 'limit' to avoid buying power issues (Tradier calculates gross margin for debit/credit)
+          // Closing existing positions should use limit orders, not debit/credit types
+          const orderType = proposal.side === 'OPEN' 
+            ? 'credit'  // Opening: assume credit spreads (premium selling)
+            : 'limit';  // Closing: use limit to avoid buying power calculation issues
 
           orderResult = await this.tradierClient.placeOrder({
             class: 'multileg',
