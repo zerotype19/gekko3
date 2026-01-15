@@ -208,7 +208,13 @@ def group_positions_by_trade(raw_positions):
     return grouped
 
 def determine_strategy(legs):
-    """Guess strategy based on leg count and structure"""
+    """
+    Guess strategy based on leg count and structure.
+    
+    Note: Ratio Spreads (3 legs: e.g., 1 Short + 2 Long) will be labeled
+    as 'MANUAL_RECOVERY' since they don't match standard 2-leg or 4-leg patterns.
+    This is acceptable - the Brain can still track and manage these positions.
+    """
     if len(legs) == 2:
         # Check if it's a spread (one long, one short, same type)
         types = [l['type'] for l in legs]
@@ -223,12 +229,28 @@ def determine_strategy(legs):
         if calls == 2 and puts == 2:
             return 'IRON_CONDOR'
         return 'IRON_BUTTERFLY'
+    # 3 legs (Ratio Spread) or other patterns → Manual Recovery
     return 'MANUAL_RECOVERY'
 
 def calculate_entry_price(legs):
     """
-    Calculate entry price from cost basis.
-    For credit spreads, entry is the net credit received.
+    Calculate entry price from Tradier cost basis.
+    
+    Math Verification:
+    - Tradier cost_basis = Total Cash Value (e.g., -$250 for 5 contracts sold)
+    - Brain entry_price = Aggregate Limit Price (e.g., $2.50 for 5 contracts)
+    - Conversion: $250 / 100 = $2.50 ✓
+    
+    Process:
+    1. For each leg: cost_basis / quantity = per_contract price
+       Example: -$250 / 5 = -$50 per contract (credit received)
+    2. Sum credits/debits across all legs to get total_cost
+       Example: -$50 * 5 = -$250 (total credit received)
+    3. Convert to Brain format: abs(total_cost) / 100.0
+       Example: $250 / 100 = $2.50 (aggregate limit price)
+    
+    This matches MarketFeed's expectation where entry_price is stored
+    as the aggregate limit price (unit price * quantity), not per-contract.
     """
     total_cost = 0.0
     for leg in legs:
@@ -245,8 +267,9 @@ def calculate_entry_price(legs):
                 total_cost -= per_contract * quantity  # Debit paid
     
     # Entry price is the net credit (positive) or debit (negative)
-    # For Brain tracking, we want positive entry price (credit received)
-    return abs(total_cost) / 100.0  # Convert to per-contract basis
+    # Brain expects aggregate limit price: Total Cash Value / 100
+    # Example: $250 total credit → $2.50 aggregate price ✓
+    return abs(total_cost) / 100.0  # Convert total cash to aggregate limit price
 
 def run_recovery():
     if not ACCESS_TOKEN:
