@@ -500,18 +500,27 @@ class MarketFeed:
         # Collect symbols for quotes (only for OPEN positions - CLOSING positions don't need quotes)
         # Also include positions with status=None (recovered positions default to OPEN)
         all_legs = []
+        has_closing_positions = False
         for pos in self.open_positions.values():
             status = pos.get('status')
             if status == 'OPEN' or status is None:
                 for leg in pos['legs']:
                     all_legs.append(leg['symbol'])
+            elif status == 'CLOSING':
+                has_closing_positions = True  # Track if we have CLOSING positions to monitor
         
-        if not all_legs: 
+        # CRITICAL: Don't return early if we have CLOSING positions - they need monitoring even without quotes
+        # Only return early if we have no positions at all
+        if not self.open_positions:
             return
-        quotes = await self._get_quotes(all_legs)
-        if not quotes:
-            logging.warning(f"⚠️ Failed to fetch quotes for {len(all_legs)} option symbols.")
-            return
+        
+        # Only fetch quotes if we have OPEN positions (CLOSING positions don't need quotes for P&L)
+        quotes = {}
+        if all_legs:
+            quotes = await self._get_quotes(all_legs)
+            if not quotes:
+                logging.warning(f"⚠️ Failed to fetch quotes for {len(all_legs)} option symbols.")
+                # Continue anyway - we still need to check CLOSING positions
 
         now = datetime.now()
         
