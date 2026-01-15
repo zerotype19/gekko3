@@ -1456,8 +1456,20 @@ class MarketFeed:
                     async with aiohttp.ClientSession() as session:
                         async with session.get(url, headers=headers, params=params) as resp:
                             if resp.status == 200:
-                                data = await resp.json()
+                                try:
+                                    data = await resp.json()
+                                    if data is None:
+                                        logging.debug(f"⚠️ Empty response for {symbol} on {day_date.date()}")
+                                        continue
+                                except Exception as json_err:
+                                    logging.debug(f"⚠️ JSON parse error for {symbol} on {day_date.date()}: {json_err}")
+                                    continue
+                                
                                 # Timesales endpoint returns: series.data (array of data points)
+                                if not isinstance(data, dict):
+                                    logging.debug(f"⚠️ Unexpected response format for {symbol} on {day_date.date()}: {type(data)}")
+                                    continue
+                                
                                 series_data = data.get('series', {}).get('data', [])
                                 
                                 if not series_data:
