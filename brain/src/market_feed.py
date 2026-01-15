@@ -334,13 +334,17 @@ class MarketFeed:
         return 100000.0  # Safe fallback so we don't crash
 
     async def _get_order_status(self, order_id: str) -> Optional[str]:
-        """Check status of a specific order (uses SANDBOX API where orders are executed)"""
+        """
+        Get order status from Tradier (uses SANDBOX API where orders are executed)
+        Returns: 'filled', 'canceled', 'pending', 'rejected', 'expired', or None on error
+        Also logs rejection reasons for debugging
+        """
         if not self.account_id: 
             await self._fetch_account_id()
         if not self.account_id: 
             return None
 
-        # Use SANDBOX API for order status checks (Gatekeeper executes orders in sandbox)
+        # Use SANDBOX API for order status (Gatekeeper executes orders in sandbox)
         sandbox_api_base = "https://sandbox.tradier.com/v1"
         headers = {'Authorization': f'Bearer {self.sandbox_token}', 'Accept': 'application/json'}
         url = f"{sandbox_api_base}/accounts/{self.account_id}/orders/{order_id}"
@@ -351,9 +355,26 @@ class MarketFeed:
                     if resp.status == 200:
                         data = await resp.json()
                         order = data.get('order', {})
-                        return order.get('status')  # 'filled', 'canceled', 'pending', 'rejected'
+                        status = order.get('status')
+                        
+                        # Log rejection reasons for debugging
+                        if status == 'rejected':
+                            error_msg = order.get('error', order.get('message', 'Unknown rejection reason'))
+                            logging.warning(f"🚫 Order {order_id} REJECTED: {error_msg}")
+                        
+                        return status  # 'filled', 'canceled', 'pending', 'rejected', 'expired'
+                    elif resp.status == 404:
+                        # Order not found - might be filled and removed, or invalid ID
+                        logging.warning(f"⚠️ Order {order_id} not found (404). May be filled or invalid.")
+                        return None
+                    else:
+                        error_text = await resp.text()
+                        logging.error(f"⚠️ Order status check failed for {order_id}: HTTP {resp.status} - {error_text[:200]}")
+                        return None
         except Exception as e:
-            logging.error(f"Check order status failed: {e}")
+            logging.error(f"❌ Check order status failed for {order_id}: {e}")
+            import traceback
+            traceback.print_exc()
         return None
 
     async def _cancel_order(self, order_id: str) -> bool:
@@ -601,21 +622,48 @@ class MarketFeed:
                         self._save_positions_to_disk()
                     continue
                 
-                status = await self._get_order_status(order_id)
+                order_status = await self._get_order_status(order_id)
                 
-                if status == 'filled':
+                # Handle API failure - check if order still exists in Tradier
+                if order_status is None:
+                    logging.warning(f"⚠️ Could not get order status for {order_id}. Checking Tradier positions as fallback...")
+                    # Fallback: Check if position still exists in Tradier
+                    actual_positions = await self._get_actual_positions()
+                    if actual_positions:
+                        leg_symbols = [leg.get('symbol') for leg in pos.get('legs', [])]
+                        found_legs = [sym for sym in leg_symbols if sym in actual_positions]
+                        if not found_legs or len(found_legs) < len(leg_symbols) * 0.5:  # Less than 50% of legs exist
+                            # Position likely closed (order filled)
+                            logging.info(f"✅ FALLBACK: Position {trade_id} no longer in Tradier. Assuming filled.")
+                            del self.open_positions[trade_id]
+                            self._save_positions_to_disk()
+                            continue
+                        else:
+                            # Position still exists, order might be pending or rejected
+                            # Try to get order details from Tradier directly
+                            logging.info(f"⚠️ Position still exists, order {order_id} status unknown. Will retry next cycle.")
+                            continue
+                    else:
+                        # Can't verify, wait for next cycle
+                        logging.warning(f"⚠️ Cannot verify order {order_id} status. Will retry next cycle.")
+                        continue
+                
+                if order_status == 'filled':
                     logging.info(f"✅ ORDER FILLED for {trade_id}. Position Closed.")
                     del self.open_positions[trade_id]
                     self._save_positions_to_disk()
                     continue
                 
-                elif status in ['canceled', 'rejected', 'expired']:
-                    logging.warning(f"⚠️ Closing Order {status} for {trade_id}. Will retry after delay...")
+                elif order_status in ['canceled', 'rejected', 'expired']:
+                    # CRITICAL: Log rejection reason if available
+                    logging.warning(f"⚠️ Closing Order {order_status} for {trade_id} (Order ID: {order_id}). Will retry after delay...")
+                    # For rejected orders, check if it's a buying power issue (shouldn't happen for closing)
+                    # Reset to OPEN so exit conditions can be re-evaluated
                     pos['status'] = 'OPEN'  # Reset to try again
                     del pos['close_order_id']
                     if 'closing_timestamp' in pos:
                         del pos['closing_timestamp']
-                    # Add retry delay timestamp to prevent immediate retry
+                    # Add retry delay timestamp to prevent immediate retry (wait 10 seconds for rejected orders)
                     pos['last_close_attempt'] = now
                     self._save_positions_to_disk()
                     continue
@@ -816,10 +864,19 @@ class MarketFeed:
                 last_attempt = pos.get('last_close_attempt')
                 if last_attempt:
                     seconds_since_attempt = (now - last_attempt).total_seconds()
-                    if seconds_since_attempt < 5:  # Wait 5 seconds after cancellation/rejection
+                    # Wait 10 seconds after rejection (longer delay for rejected orders)
+                    # Wait 5 seconds after cancellation
+                    wait_time = 10 if pos.get('close_order_id') else 5
+                    if seconds_since_attempt < wait_time:
+                        logging.debug(f"⏳ Waiting to retry close for {trade_id} ({int(wait_time - seconds_since_attempt)}s remaining)")
                         continue  # Skip this cycle, try again next time
                     # Enough time has passed, clear the delay flag
                     del pos['last_close_attempt']
+                
+                # Don't attempt close if already CLOSING (wait for current order to resolve)
+                if pos.get('status') == 'CLOSING':
+                    logging.debug(f"⏳ {trade_id} already has close order pending, waiting for resolution...")
+                    continue
                 
                 logging.info(f"🛑 ATTEMPTING CLOSE {trade_id} | P&L: {pnl_pct:.1f}% | Reason: {reason}")
                 await self._execute_close(trade_id, pos, cost_to_close)
