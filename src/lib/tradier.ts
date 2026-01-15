@@ -201,8 +201,18 @@ export class TradierClient {
       const sides = orderPayload['side[]'] || [];
       const quantities = orderPayload['quantity[]'] || [];
 
+      // Tradier multileg format: option_symbol[0], option_symbol[1], etc.
+      // side[0], side[1], etc.
+      // quantity[0], quantity[1], etc.
       symbols.forEach((sym, idx) => body.append(`option_symbol[${idx}]`, sym));
-      sides.forEach((side, idx) => body.append(`side[${idx}]`, side));
+      sides.forEach((side, idx) => {
+        // Validate side is correct option order type (not stock order type)
+        if (!['buy_to_open', 'sell_to_open', 'buy_to_close', 'sell_to_close'].includes(side)) {
+          console.error(`[Tradier] Invalid side for option order: ${side} at index ${idx}`);
+          throw new Error(`Invalid option side: ${side}. Must be buy_to_open, sell_to_open, buy_to_close, or sell_to_close`);
+        }
+        body.append(`side[${idx}]`, side);
+      });
       quantities.forEach((qty, idx) => body.append(`quantity[${idx}]`, qty.toString()));
     } else {
       if (orderPayload.option_symbol) body.append('option_symbol', orderPayload.option_symbol);
