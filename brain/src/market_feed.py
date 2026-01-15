@@ -2325,12 +2325,11 @@ class MarketFeed:
                 return
 
         # -----------------------------------------------
-        # STRATEGY 4: TREND ENGINE
+        # STRATEGY 4: TREND ENGINE (Enhanced with Market Structure S/R)
         # PERMISSION: ONLY in TRENDING
         # -----------------------------------------------
         if not signal and current_regime.value == 'TRENDING':
             if not indicators.get('is_warm', False):
-                # Log progress occasionally
                 if indicators.get('candle_count', 0) % 60 == 0:
                     logging.info(f"⏳ Warmup {symbol}: {indicators.get('candle_count')}/200")
                 return
@@ -2339,33 +2338,57 @@ class MarketFeed:
             rsi = indicators['rsi']
             flow = indicators['flow_state']
             
-            # Volume Profile Filter (Auction Market Theory)
-            # For trend strategies, confirm price is above/below POC relative to trend direction
+            # Market Structure (Support/Resistance via Volume)
             poc = indicators.get('poc', 0)
+            vah = indicators.get('vah', 0)  # Value Area High (Dynamic Resistance)
+            val = indicators.get('val', 0)  # Value Area Low (Dynamic Support)
             current_price = indicators['price']
             
-            if trend == 'UPTREND' and rsi < 30 and flow != 'NEUTRAL':
-                # Bullish: Only take if price is above POC (buyers in control, value migrating up)
-                if poc > 0 and current_price > poc:
+            if poc == 0: return # Wait for volume profile build
+
+            # --- BULLISH LOGIC ---
+            if trend == 'UPTREND' and flow != 'NEUTRAL':
+                # Setup 1: The Breakout (Price > Resistance)
+                # If price clears VAH, resistance becomes support. Strongest bullish signal.
+                if current_price > vah and rsi < 60: # Relaxed RSI for breakouts
                     signal = 'BULL_PUT_SPREAD'
                     strategy = 'CREDIT_SPREAD'
                     side = 'OPEN'
                     option_type = 'PUT'
                     bias = 'bullish'
-                    logging.info(f"🔍 Vol Profile: Price ${current_price:.2f} vs POC ${poc:.2f} (Above) - Trend confirmed")
-                elif poc > 0:
-                    logging.debug(f"🔍 Vol Profile: Price ${current_price:.2f} vs POC ${poc:.2f} (Below) - Rejecting bullish signal (not above value)")
-            elif trend == 'DOWNTREND' and rsi > 70 and flow != 'NEUTRAL':
-                # Bearish: Only take if price is below POC (sellers in control, value migrating down)
-                if poc > 0 and current_price < poc:
+                    logging.info(f"🚀 S/R BREAKOUT: {symbol} Price ${current_price:.2f} cleared VAH ${vah:.2f}. Market Structure Shift.")
+
+                # Setup 2: The Value Pullback (Price Retests Value)
+                # Price dips into Value Area but holds above POC. Classic trend continuation.
+                elif current_price > poc and current_price < vah and rsi < 30:
+                    signal = 'BULL_PUT_SPREAD'
+                    strategy = 'CREDIT_SPREAD'
+                    side = 'OPEN'
+                    option_type = 'PUT'
+                    bias = 'bullish'
+                    logging.info(f"🛡️ S/R SUPPORT: {symbol} Price ${current_price:.2f} finding support at Value Area (POC ${poc:.2f}).")
+
+            # --- BEARISH LOGIC ---
+            elif trend == 'DOWNTREND' and flow != 'NEUTRAL':
+                # Setup 1: The Breakdown (Price < Support)
+                # If price falls below VAL, support becomes resistance. Strongest bearish signal.
+                if current_price < val and rsi > 40: # Relaxed RSI for breakdowns
                     signal = 'BEAR_CALL_SPREAD'
                     strategy = 'CREDIT_SPREAD'
                     side = 'OPEN'
                     option_type = 'CALL'
                     bias = 'bearish'
-                    logging.info(f"🔍 Vol Profile: Price ${current_price:.2f} vs POC ${poc:.2f} (Below) - Trend confirmed")
-                elif poc > 0:
-                    logging.debug(f"🔍 Vol Profile: Price ${current_price:.2f} vs POC ${poc:.2f} (Above) - Rejecting bearish signal (not below value)")
+                    logging.info(f"📉 S/R BREAKDOWN: {symbol} Price ${current_price:.2f} lost VAL ${val:.2f}. Market Structure Shift.")
+
+                # Setup 2: The Value Rally (Price Retests Resistance)
+                # Price rallies into Value Area but fails at POC.
+                elif current_price < poc and current_price > val and rsi > 70:
+                    signal = 'BEAR_CALL_SPREAD'
+                    strategy = 'CREDIT_SPREAD'
+                    side = 'OPEN'
+                    option_type = 'CALL'
+                    bias = 'bearish'
+                    logging.info(f"🧱 S/R RESISTANCE: {symbol} Price ${current_price:.2f} rejecting at Value Area (POC ${poc:.2f}).")
 
         # Get IV Rank for complex strategies
         iv_rank = self.alpha_engine.get_iv_rank(symbol)
