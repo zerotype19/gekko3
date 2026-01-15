@@ -1456,20 +1456,26 @@ class MarketFeed:
                     async with aiohttp.ClientSession() as session:
                         async with session.get(url, headers=headers, params=params) as resp:
                             if resp.status == 200:
+                                # Read response text first (can only read once)
                                 try:
-                                    data = await resp.json()
-                                    if data is None:
-                                        # Check if response body is empty
-                                        text = await resp.text()
-                                        logging.debug(f"⚠️ Empty JSON response for {symbol} on {day_date.date()}, body: {text[:100]}")
+                                    text = await resp.text()
+                                    if not text or text.strip() == '':
+                                        logging.debug(f"⚠️ Empty response body for {symbol} on {day_date.date()}")
                                         continue
-                                except Exception as json_err:
-                                    # Try to get the raw response text for debugging
+                                    
+                                    # Try to parse as JSON
                                     try:
-                                        text = await resp.text()
+                                        data = json.loads(text)
+                                    except json.JSONDecodeError as json_err:
                                         logging.debug(f"⚠️ JSON parse error for {symbol} on {day_date.date()}: {json_err}, body: {text[:200]}")
-                                    except:
-                                        logging.debug(f"⚠️ JSON parse error for {symbol} on {day_date.date()}: {json_err}")
+                                        continue
+                                    
+                                    if data is None:
+                                        logging.debug(f"⚠️ Parsed JSON is None for {symbol} on {day_date.date()}, body: {text[:100]}")
+                                        continue
+                                    
+                                except Exception as read_err:
+                                    logging.debug(f"⚠️ Error reading response for {symbol} on {day_date.date()}: {read_err}")
                                     continue
                                 
                                 # Timesales endpoint returns: series.data (array of data points)
