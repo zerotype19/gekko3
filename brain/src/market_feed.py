@@ -459,10 +459,43 @@ class MarketFeed:
                 
                 order_status = await self._get_order_status(order_id)
                 
+                # FALLBACK: If order status check fails, verify by checking actual positions
+                # This catches cases where order status API fails but position exists
+                if order_status is None:
+                    logging.warning(f"⚠️ Order status check failed for {order_id}. Checking actual positions as fallback...")
+                    actual_positions = await self._get_actual_positions()
+                    if actual_positions:
+                        # Check if any of our legs exist in Tradier
+                        leg_symbols = [leg.get('symbol') for leg in pos.get('legs', [])]
+                        found_legs = [sym for sym in leg_symbols if sym in actual_positions]
+                        if found_legs:
+                            logging.info(f"✅ FALLBACK: Found {len(found_legs)}/{len(leg_symbols)} legs in Tradier for {trade_id}. Assuming filled.")
+                            order_status = 'filled'
+                        else:
+                            # No legs found, might be canceled or never filled
+                            logging.warning(f"⚠️ No legs found in Tradier for {trade_id}. Order may be canceled.")
+                            # Don't delete yet, wait for next check
+                            continue
+                    else:
+                        # Can't verify, skip this check
+                        logging.warning(f"⚠️ Cannot verify order {order_id} status. Will retry next cycle.")
+                        continue
+                
                 if order_status == 'filled':
                     logging.info(f"✅ ENTRY FILLED for {trade_id}. Tracking active position.")
                     pos['status'] = 'OPEN'
                     pos['timestamp'] = now  # Reset timer to fill time
+                    # Verify actual quantities from Tradier (may differ if partially filled)
+                    actual_positions = await self._get_actual_positions()
+                    if actual_positions:
+                        for leg in pos.get('legs', []):
+                            leg_symbol = leg.get('symbol')
+                            actual_pos = actual_positions.get(leg_symbol)
+                            if actual_pos:
+                                actual_qty = abs(float(actual_pos.get('quantity', 0)))
+                                if actual_qty > 0:
+                                    leg['quantity'] = int(actual_qty)
+                                    logging.info(f"   Updated {leg_symbol} quantity to {actual_qty} (from Tradier)")
                     self._save_positions_to_disk()
                 
                 elif order_status in ['canceled', 'rejected', 'expired']:
@@ -788,6 +821,60 @@ class MarketFeed:
         except Exception as e:
             logging.error(f"Failed to fetch actual positions: {e}")
         return {}
+
+    async def _reconcile_fills(self):
+        """
+        Lightweight reconciliation: Check if OPENING positions have actually filled
+        by comparing Brain's tracked positions with Tradier's actual positions.
+        This catches fills that were missed by order status checks.
+        """
+        if not self.open_positions:
+            return
+        
+        # Find all OPENING positions
+        opening_positions = {tid: pos for tid, pos in self.open_positions.items() 
+                            if pos.get('status') == 'OPENING'}
+        
+        if not opening_positions:
+            return
+        
+        logging.info(f"🔍 Checking {len(opening_positions)} OPENING position(s) for fills...")
+        
+        # Fetch actual positions from Tradier
+        actual_positions = await self._get_actual_positions()
+        if not actual_positions:
+            logging.warning("⚠️ Cannot reconcile fills: Failed to fetch Tradier positions")
+            return
+        
+        now = datetime.now()
+        updated = False
+        
+        for trade_id, pos in opening_positions.items():
+            # Check if any legs exist in Tradier
+            leg_symbols = [leg.get('symbol') for leg in pos.get('legs', [])]
+            found_legs = [sym for sym in leg_symbols if sym in actual_positions]
+            
+            if found_legs:
+                # At least some legs exist - position likely filled
+                logging.info(f"✅ RECONCILIATION: Found {len(found_legs)}/{len(leg_symbols)} legs in Tradier for {trade_id}. Marking as OPEN.")
+                pos['status'] = 'OPEN'
+                pos['timestamp'] = now
+                
+                # Update quantities from actual positions
+                for leg in pos.get('legs', []):
+                    leg_symbol = leg.get('symbol')
+                    actual_pos = actual_positions.get(leg_symbol)
+                    if actual_pos:
+                        actual_qty = abs(float(actual_pos.get('quantity', 0)))
+                        if actual_qty > 0:
+                            leg['quantity'] = int(actual_qty)
+                            logging.info(f"   Updated {leg_symbol} quantity to {actual_qty}")
+                
+                updated = True
+        
+        if updated:
+            self._save_positions_to_disk()
+            logging.info("💾 Updated positions saved to disk")
 
     async def reconcile_state(self):
         """Startup Reconciliation (Adopt Orphans from Tradier)
