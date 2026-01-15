@@ -1478,12 +1478,23 @@ class MarketFeed:
                                     logging.debug(f"⚠️ Error reading response for {symbol} on {day_date.date()}: {read_err}")
                                     continue
                                 
+                                # Double-check data is valid before accessing
+                                if data is None:
+                                    logging.debug(f"⚠️ Data is None after parsing for {symbol} on {day_date.date()}")
+                                    continue
+                                
                                 # Timesales endpoint returns: series.data (array of data points)
                                 if not isinstance(data, dict):
                                     logging.debug(f"⚠️ Unexpected response format for {symbol} on {day_date.date()}: {type(data)}, data: {str(data)[:100]}")
                                     continue
                                 
-                                series_data = data.get('series', {}).get('data', [])
+                                # Safely access nested data
+                                series = data.get('series')
+                                if not series or not isinstance(series, dict):
+                                    logging.debug(f"⚠️ No 'series' key or invalid format for {symbol} on {day_date.date()}, data keys: {list(data.keys())}")
+                                    continue
+                                
+                                series_data = series.get('data', [])
                                 
                                 # If no data, check if there's an error message
                                 if not series_data and 'fault' in data:

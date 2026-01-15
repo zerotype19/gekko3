@@ -1,6 +1,6 @@
 {
   "system": {
-    "timestamp": "2026-01-15T12:23:03.539037",
+    "timestamp": "2026-01-15T12:24:48.828651",
     "regime": "LOW_VOL_CHOP",
     "portfolio_risk": {
       "delta": 0.0,
@@ -11,51 +11,51 @@
     "total_positions": 4,
     "positions": [
       {
-        "trade_id": "DIA_CREDIT_SPREAD_RECOVERED_1768497677",
+        "trade_id": "DIA_CREDIT_SPREAD_RECOVERED_1768497856",
         "symbol": "DIA",
         "strategy": "CREDIT_SPREAD",
         "status": "OPEN",
         "entry_price": 6.22,
         "bias": "bullish",
         "legs_count": 2,
-        "timestamp": "2026-01-15T12:21:17.841127"
+        "timestamp": "2026-01-15T12:24:16.218423"
       },
       {
-        "trade_id": "IWM_MANUAL_RECOVERY_RECOVERED_1768497677",
+        "trade_id": "IWM_MANUAL_RECOVERY_RECOVERED_1768497856",
         "symbol": "IWM",
         "strategy": "MANUAL_RECOVERY",
         "status": "OPEN",
         "entry_price": 72.98,
         "bias": "neutral",
         "legs_count": 8,
-        "timestamp": "2026-01-15T12:21:17.841178"
+        "timestamp": "2026-01-15T12:24:16.218481"
       },
       {
-        "trade_id": "QQQ_IRON_BUTTERFLY_RECOVERED_1768497677",
+        "trade_id": "QQQ_IRON_BUTTERFLY_RECOVERED_1768497856",
         "symbol": "QQQ",
         "strategy": "IRON_BUTTERFLY",
         "status": "OPEN",
         "entry_price": 22.22,
         "bias": "neutral",
         "legs_count": 4,
-        "timestamp": "2026-01-15T12:21:17.841215"
+        "timestamp": "2026-01-15T12:24:16.218518"
       },
       {
-        "trade_id": "SPY_CREDIT_SPREAD_RECOVERED_1768497677",
+        "trade_id": "SPY_CREDIT_SPREAD_RECOVERED_1768497856",
         "symbol": "SPY",
         "strategy": "CREDIT_SPREAD",
         "status": "OPEN",
         "entry_price": 11.04,
         "bias": "bullish",
         "legs_count": 2,
-        "timestamp": "2026-01-15T12:21:17.841241"
+        "timestamp": "2026-01-15T12:24:16.218543"
       }
     ],
     "status": "CONNECTED"
   },
   "market": {
     "SPY": {
-      "price": 694.865,
+      "price": 694.855,
       "rsi": 50.0,
       "adx": 25.0,
       "iv_rank": 0.0,
@@ -64,12 +64,12 @@
       "vix": 16.11,
       "volume_velocity": 1.0,
       "active_signal": null,
-      "poc": 694.865,
-      "vah": 694.92,
-      "val": 694.81
+      "poc": 0.0,
+      "vah": 0.0,
+      "val": 0.0
     },
     "QQQ": {
-      "price": 626.05,
+      "price": 626.13,
       "rsi": 50.0,
       "adx": 25.0,
       "iv_rank": 3.9562051094037987,
@@ -78,12 +78,12 @@
       "vix": 16.11,
       "volume_velocity": 1.0,
       "active_signal": null,
-      "poc": 625.985,
-      "vah": 626.0894666666667,
-      "val": 625.985
+      "poc": 0.0,
+      "vah": 0.0,
+      "val": 0.0
     },
     "IWM": {
-      "price": 266.41,
+      "price": 266.395,
       "rsi": 50.0,
       "adx": 25.0,
       "iv_rank": 25.540576974925983,
@@ -92,12 +92,12 @@
       "vix": 16.11,
       "volume_velocity": 1.0,
       "active_signal": null,
-      "poc": 266.355,
-      "vah": 266.4699,
-      "val": 266.355
+      "poc": 0.0,
+      "vah": 0.0,
+      "val": 0.0
     },
     "DIA": {
-      "price": 495.28999999999996,
+      "price": 495.205,
       "rsi": 50.0,
       "adx": 25.0,
       "iv_rank": 8.141455754287946,
@@ -106,9 +106,9 @@
       "vix": 16.11,
       "volume_velocity": 1.0,
       "active_signal": null,
-      "poc": 495.300675,
-      "vah": 495.35135,
-      "val": 495.25
+      "poc": 0.0,
+      "vah": 0.0,
+      "val": 0.0
     }
   }
 }
