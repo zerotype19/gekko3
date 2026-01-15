@@ -1,5 +1,5 @@
 {
-  "DIA_CREDIT_SPREAD_RECOVERED_1768508937": {
+  "DIA_CREDIT_SPREAD_RECOVERED_1768509139": {
     "symbol": "DIA",
     "strategy": "CREDIT_SPREAD",
     "legs": [
@@ -22,115 +22,17 @@
     ],
     "entry_price": 6.22,
     "bias": "bullish",
-    "timestamp": "2026-01-15T15:28:57.304439",
-    "highest_pnl": 94.21221864951768,
+    "timestamp": "2026-01-15T15:32:19.813160",
+    "highest_pnl": 95.7395498392283,
     "status": "CLOSING",
     "live_greeks": {
       "delta": -1.270542613503121,
       "theta": -12.410817149773427,
       "vega": 10.28640886072295
     },
-    "close_order_id": "24397955",
-    "close_limit_price": 0.40999999999999986,
-    "closing_timestamp": "2026-01-15T15:29:26.624534",
-    "cancelling": true,
-    "cancel_attempt_time": "2026-01-15T15:31:35.448649"
-  },
-  "IWM_RATIO_SPREAD_1768509003": {
-    "symbol": "IWM",
-    "strategy": "RATIO_SPREAD",
-    "status": "OPENING",
-    "open_order_id": "24398003",
-    "opening_timestamp": "2026-01-15T15:30:03.682117",
-    "legs": [
-      {
-        "symbol": "IWM260213P00260000",
-        "expiration": "2026-02-13",
-        "strike": 260.0,
-        "type": "PUT",
-        "quantity": 2,
-        "side": "SELL"
-      },
-      {
-        "symbol": "IWM260213P00252000",
-        "expiration": "2026-02-13",
-        "strike": 252.0,
-        "type": "PUT",
-        "quantity": 4,
-        "side": "BUY"
-      }
-    ],
-    "entry_price": 0.08,
-    "bias": "bearish",
-    "timestamp": "2026-01-15T15:30:03.682127",
-    "highest_pnl": -100.0
-  },
-  "QQQ_RATIO_SPREAD_1768509006": {
-    "symbol": "QQQ",
-    "strategy": "RATIO_SPREAD",
-    "status": "OPEN",
-    "open_order_id": "24398041",
-    "opening_timestamp": "2026-01-15T15:30:06.164586",
-    "legs": [
-      {
-        "symbol": "QQQ260213P00608000",
-        "expiration": "2026-02-13",
-        "strike": 608.0,
-        "type": "PUT",
-        "quantity": 1,
-        "side": "SELL"
-      },
-      {
-        "symbol": "QQQ260213P00585000",
-        "expiration": "2026-02-13",
-        "strike": 585.0,
-        "type": "PUT",
-        "quantity": 2,
-        "side": "BUY"
-      }
-    ],
-    "entry_price": 0.45,
-    "bias": "bearish",
-    "timestamp": "2026-01-15T15:30:36.666901",
-    "highest_pnl": 11.111111111111034,
-    "live_greeks": {
-      "delta": -0.5991242444760196,
-      "theta": -19.37188758993143,
-      "vega": 21.777412886437965
-    }
-  },
-  "SPY_RATIO_SPREAD_1768509008": {
-    "symbol": "SPY",
-    "strategy": "RATIO_SPREAD",
-    "status": "OPEN",
-    "open_order_id": "24398082",
-    "opening_timestamp": "2026-01-15T15:30:08.244520",
-    "legs": [
-      {
-        "symbol": "SPY260213P00682000",
-        "expiration": "2026-02-13",
-        "strike": 682.0,
-        "type": "PUT",
-        "quantity": 1,
-        "side": "SELL"
-      },
-      {
-        "symbol": "SPY260213P00659000",
-        "expiration": "2026-02-13",
-        "strike": 659.0,
-        "type": "PUT",
-        "quantity": 2,
-        "side": "BUY"
-      }
-    ],
-    "entry_price": 0.69,
-    "bias": "bearish",
-    "timestamp": "2026-01-15T15:31:00.953332",
-    "highest_pnl": 2.898550724637684,
-    "live_greeks": {
-      "delta": 0.21556973561513715,
-      "theta": -20.679581171875963,
-      "vega": 23.985418504504594
-    }
+    "close_limit_price": 0.36999999999999983,
+    "cancel_attempt_time": "2026-01-15T15:50:46.790573",
+    "close_order_id": "24400446",
+    "closing_timestamp": "2026-01-15T15:51:10.064210"
   }
 }

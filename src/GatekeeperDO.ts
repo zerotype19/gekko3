@@ -682,14 +682,18 @@ export class GatekeeperDO {
           }
 
           // Order Type Logic
-          // For OPEN orders: Use 'credit' (premium selling strategies)
-          // For CLOSE orders: Use 'debit' with price limit (buying back positions)
-          // 'debit' with price tells Tradier: "Pay up to $X to close, but no more"
-          // This provides price protection (limit order behavior) while satisfying Tradier's API
-          // CRITICAL: Using 'market' exposes system to unlimited slippage - always use 'debit' with price
-          const orderType = proposal.side === 'OPEN' 
-            ? 'credit'  // Opening: credit spreads (selling premium)
-            : 'debit';  // Closing: debit limit (buying back, max price protection)
+          // Order Type Logic:
+          // - Allow Brain to specify type (e.g., 'market' for emergency exits)
+          // - Default based on side if not specified
+          // - 'market' = unlimited slippage (use only for illiquid positions)
+          // - 'credit'/'debit' = limit order with price protection (default)
+          let orderType = proposal.type; // Allow Brain to specify type
+          if (!orderType) {
+            // Default behavior: credit for opening, debit for closing
+            orderType = proposal.side === 'OPEN' 
+              ? 'credit'  // Opening: credit spreads (selling premium)
+              : 'debit';  // Closing: debit limit (buying back, max price protection)
+          }
 
           // Build order payload
           const orderPayload: any = {
@@ -702,9 +706,9 @@ export class GatekeeperDO {
             'quantity[]': quantities
           };
           
-          // Always include price for credit/debit orders (limit order behavior)
-          // This ensures we don't pay more than the limit price when closing
-          if (proposal.price !== undefined) {
+          // Only include price for non-market orders (limit order behavior)
+          // Market orders do not accept a price parameter
+          if (orderType !== 'market' && proposal.price !== undefined) {
             orderPayload.price = proposal.price;
           }
           
