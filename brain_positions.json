@@ -1,5 +1,5 @@
 {
-  "DIA_CREDIT_SPREAD_RECOVERED_1768489366": {
+  "DIA_CREDIT_SPREAD_RECOVERED_1768492905": {
     "symbol": "DIA",
     "strategy": "CREDIT_SPREAD",
     "legs": [
@@ -22,10 +22,10 @@
     ],
     "entry_price": 6.22,
     "bias": "bullish",
-    "timestamp": "2026-01-15T10:02:46.885651",
+    "timestamp": "2026-01-15T11:01:45.968682",
     "highest_pnl": -100.0
   },
-  "IWM_MANUAL_RECOVERY_RECOVERED_1768489366": {
+  "IWM_MANUAL_RECOVERY_RECOVERED_1768492905": {
     "symbol": "IWM",
     "strategy": "MANUAL_RECOVERY",
     "legs": [
@@ -78,12 +78,12 @@
         "side": "SELL"
       }
     ],
-    "entry_price": 61.6,
+    "entry_price": 4284.0,
     "bias": "neutral",
-    "timestamp": "2026-01-15T10:02:46.885662",
+    "timestamp": "2026-01-15T11:01:45.968731",
     "highest_pnl": -100.0
   },
-  "QQQ_CREDIT_SPREAD_RECOVERED_1768489366": {
+  "QQQ_CREDIT_SPREAD_RECOVERED_1768492905": {
     "symbol": "QQQ",
     "strategy": "CREDIT_SPREAD",
     "legs": [
@@ -106,7 +106,7 @@
     ],
     "entry_price": 9.99,
     "bias": "bullish",
-    "timestamp": "2026-01-15T10:02:46.885668",
+    "timestamp": "2026-01-15T11:01:45.968759",
     "highest_pnl": -100.0
   }
 }

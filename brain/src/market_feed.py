@@ -965,15 +965,15 @@ class MarketFeed:
                 qty = float(actual_pos.get('quantity', 0))  # Can be negative (short)
                 cost_basis = float(actual_pos.get('cost_basis', 0))
                 
-                # Calculate net credit/debit per leg
+                # Tradier's cost_basis is already the TOTAL cost basis (not per contract)
                 # For SELL (qty < 0): cost_basis is negative (we received money)
                 # For BUY (qty > 0): cost_basis is positive (we paid money)
-                price_per_contract = cost_basis / abs(qty) if qty != 0 else 0
+                # So we can use cost_basis directly without dividing by quantity
                 
-                if qty < 0:  # SELL leg (credit received)
-                    net_credit += abs(price_per_contract) * abs(qty)
-                else:  # BUY leg (debit paid)
-                    net_credit -= abs(price_per_contract) * qty
+                if qty < 0:  # SELL leg (credit received, cost_basis is negative)
+                    net_credit += abs(cost_basis)  # Add the credit received
+                else:  # BUY leg (debit paid, cost_basis is positive)
+                    net_credit -= abs(cost_basis)  # Subtract the debit paid
             
             # Only recalculate if we found at least one leg
             if legs_found == 0:
