@@ -1456,6 +1456,7 @@ class MarketFeed:
                     async with aiohttp.ClientSession() as session:
                         async with session.get(url, headers=headers, params=params) as resp:
                             if resp.status == 200:
+                                data = None  # Initialize to avoid scope issues
                                 # Read response text first (can only read once)
                                 try:
                                     text = await resp.text()
@@ -1478,16 +1479,12 @@ class MarketFeed:
                                     logging.debug(f"⚠️ Error reading response for {symbol} on {day_date.date()}: {read_err}")
                                     continue
                                 
-                                # Double-check data is valid before accessing
-                                if data is None:
-                                    logging.debug(f"⚠️ Data is None after parsing for {symbol} on {day_date.date()}")
+                                # Double-check data is valid before accessing (defensive programming)
+                                if data is None or not isinstance(data, dict):
+                                    logging.debug(f"⚠️ Invalid data for {symbol} on {day_date.date()}: type={type(data)}, is_none={data is None}")
                                     continue
                                 
                                 # Timesales endpoint returns: series.data (array of data points)
-                                if not isinstance(data, dict):
-                                    logging.debug(f"⚠️ Unexpected response format for {symbol} on {day_date.date()}: {type(data)}, data: {str(data)[:100]}")
-                                    continue
-                                
                                 # Safely access nested data
                                 series = data.get('series')
                                 if not series or not isinstance(series, dict):
