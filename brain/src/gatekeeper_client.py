@@ -93,22 +93,32 @@ class GatekeeperClient:
         if 'timestamp' not in proposal_dict:
             proposal_dict['timestamp'] = int(time.time() * 1000)  # milliseconds
         
-        # Validate required fields (price is now mandatory per new Gatekeeper requirements)
-        required_fields = ['symbol', 'strategy', 'side', 'quantity', 'price', 'legs', 'context', 'signature']
+        # Check order type to determine validation rules
+        # If type is not specified, default behavior implies a limit/credit/debit order
+        order_type = proposal_dict.get('type', 'limit')
+
+        # Validate required fields
+        required_fields = ['symbol', 'strategy', 'side', 'quantity', 'legs', 'context']
+        
+        # Price is mandatory unless it's a market order
+        if order_type != 'market':
+            required_fields.append('price')
+
         missing_fields = [field for field in required_fields if field not in proposal_dict]
-        if missing_fields and 'signature' not in missing_fields:
-            # Signature will be added below, so only check others
-            missing_fields = [f for f in missing_fields if f != 'signature']
-            if missing_fields:
-                raise ValueError(f'Missing required fields: {missing_fields}')
+        if missing_fields:
+            raise ValueError(f'Missing required fields: {missing_fields}')
         
         # Validate side is OPEN or CLOSE (not BUY/SELL)
         if proposal_dict.get('side') not in ['OPEN', 'CLOSE']:
             raise ValueError(f"Invalid side: {proposal_dict.get('side')}. Must be 'OPEN' or 'CLOSE'")
         
-        # Validate price is positive
-        if 'price' in proposal_dict and (proposal_dict['price'] is None or proposal_dict['price'] <= 0):
-            raise ValueError(f"Invalid price: {proposal_dict.get('price')}. Price must be positive for limit orders")
+        # Validate price is positive (Only for Limit/Credit/Debit orders)
+        if order_type != 'market':
+            price = proposal_dict.get('price')
+            if price is None or price <= 0:
+                # Allow 0.0 for potential scratch trades if strictly intended, but usually unsafe
+                # For safety, we enforce > 0 for limit orders
+                raise ValueError(f"Invalid price: {price}. Price must be positive for limit orders.")
 
         # Sanitize data types (fix floats) BEFORE signing to match JS behavior
         proposal_dict = self._sanitize_payload(proposal_dict)
@@ -153,6 +163,7 @@ class GatekeeperClient:
                     return {
                         'status': 'APPROVED',
                         'data': response_data,
+                        'order_id': response_data.get('order_id'), # Convenience accessor
                         'http_status': response.status
                     }
                 elif response.status == 400:
