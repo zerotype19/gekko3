@@ -33,7 +33,13 @@ export interface TradeProposal {
   quantity: number;
   
   // LIMIT PRICE is mandatory for spreads (Net Credit for Open, Net Debit for Close)
+  // Optional: If not specified, default is 'credit' for OPEN, 'debit' for CLOSE
   price: number;
+
+  // Order Type (optional): 'market', 'credit', 'debit', 'limit'
+  // If not specified, defaults to 'credit' for OPEN, 'debit' for CLOSE
+  // 'market' can be used for emergency exits on illiquid positions
+  type?: 'market' | 'credit' | 'debit' | 'limit';
 
   // Spread legs (for credit spreads, typically 2 legs)
   legs: SpreadLeg[];
