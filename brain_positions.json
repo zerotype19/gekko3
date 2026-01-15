@@ -1,7 +1,7 @@
 {
-  "IWM_IRON_CONDOR_RECOVERED_1768488238": {
+  "IWM_MANUAL_RECOVERY_RECOVERED_1768489079": {
     "symbol": "IWM",
-    "strategy": "IRON_CONDOR",
+    "strategy": "MANUAL_RECOVERY",
     "legs": [
       {
         "symbol": "IWM260213C00262000",
@@ -20,12 +20,28 @@
         "side": "BUY"
       },
       {
+        "symbol": "IWM260213P00247000",
+        "expiration": "2026-02-13",
+        "strike": 247.0,
+        "type": "PUT",
+        "quantity": 4,
+        "side": "BUY"
+      },
+      {
         "symbol": "IWM260213P00252000",
         "expiration": "2026-02-13",
         "strike": 252.0,
         "type": "PUT",
         "quantity": 1,
         "side": "BUY"
+      },
+      {
+        "symbol": "IWM260213P00256000",
+        "expiration": "2026-02-13",
+        "strike": 256.0,
+        "type": "PUT",
+        "quantity": 2,
+        "side": "SELL"
       },
       {
         "symbol": "IWM260213P00262000",
@@ -36,9 +52,35 @@
         "side": "SELL"
       }
     ],
-    "entry_price": 51.62,
+    "entry_price": 61.6,
     "bias": "neutral",
-    "timestamp": "2026-01-15T09:43:58.606917",
+    "timestamp": "2026-01-15T09:57:59.226366",
+    "highest_pnl": -100.0
+  },
+  "QQQ_CREDIT_SPREAD_RECOVERED_1768489079": {
+    "symbol": "QQQ",
+    "strategy": "CREDIT_SPREAD",
+    "legs": [
+      {
+        "symbol": "QQQ260213P00580000",
+        "expiration": "2026-02-13",
+        "strike": 580.0,
+        "type": "PUT",
+        "quantity": 2,
+        "side": "BUY"
+      },
+      {
+        "symbol": "QQQ260213P00603000",
+        "expiration": "2026-02-13",
+        "strike": 603.0,
+        "type": "PUT",
+        "quantity": 1,
+        "side": "SELL"
+      }
+    ],
+    "entry_price": 9.99,
+    "bias": "bullish",
+    "timestamp": "2026-01-15T09:57:59.226405",
     "highest_pnl": -100.0
   }
 }
