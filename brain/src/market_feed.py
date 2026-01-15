@@ -538,7 +538,13 @@ class MarketFeed:
                     self._save_positions_to_disk()
                     continue
                 
+                # Log status check (same as closing orders)
+                logging.info(f"🔍 Checking entry order status for {trade_id}... (Order ID: {order_id})")
+                
                 order_status = await self._get_order_status(order_id)
+                
+                if order_status:
+                    logging.info(f"🔍 Entry Order {order_id} status: {order_status}")
                 
                 # FALLBACK: If order status check fails, verify by checking actual positions
                 # This catches cases where order status API fails but position exists
@@ -585,13 +591,47 @@ class MarketFeed:
                     self._save_positions_to_disk()
                 
                 elif order_status in ['pending', 'open', 'partially_filled']:
-                    # Check timeout (5 mins)
+                    # Check timeout (2 minutes - faster retry for opening orders)
                     sent_time = pos.get('opening_timestamp')
-                    if sent_time and (now - sent_time).total_seconds() > 300:
-                        logging.info(f"⏳ Entry Order {order_id} pending > 5m. Cancelling.")
+                    if sent_time and (now - sent_time).total_seconds() > 120:  # 2 minutes
+                        symbol = pos.get('symbol')
+                        strategy = pos.get('strategy')
+                        logging.info(f"⏳ Entry Order {order_id} pending > 2m. Re-evaluating signal for {symbol} {strategy}...")
+                        
+                        # Cancel the old order first
                         await self._cancel_order(order_id)
-                        del self.open_positions[trade_id]
-                        self._save_positions_to_disk()
+                        
+                        # Re-check if conditions still favor this trade
+                        # Get current indicators to re-evaluate
+                        indicators = self.alpha_engine.get_indicators(symbol)
+                        current_regime = self.regime_engine.get_regime(symbol)
+                        
+                        # Re-check signal conditions (simplified check - just verify regime/strategy match)
+                        should_retry = False
+                        if current_regime.value == 'TRENDING' and strategy in ['BULL_PUT_SPREAD', 'BEAR_CALL_SPREAD']:
+                            should_retry = True
+                        elif current_regime.value == 'LOW_VOL_CHOP' and strategy in ['IRON_CONDOR', 'IRON_BUTTERFLY']:
+                            should_retry = True
+                        elif current_regime.value == 'HIGH_VOL' and strategy == 'RATIO_SPREAD':
+                            should_retry = True
+                        
+                        if should_retry:
+                            logging.info(f"🔄 Signal still valid for {symbol} {strategy}. Retrying with fresh pricing...")
+                            # Delete the old position and let signal checker naturally retry
+                            # (The signal checker will see conditions still favor, and re-send proposal)
+                            del self.open_positions[trade_id]
+                            self._save_positions_to_disk()
+                            # Note: We don't immediately retry here - let the natural signal cycle handle it
+                            # This avoids duplicate proposals and respects min_proposal_interval
+                        else:
+                            logging.info(f"🚫 Signal conditions changed for {symbol} {strategy}. Cancelling and removing.")
+                            del self.open_positions[trade_id]
+                            self._save_positions_to_disk()
+                    else:
+                        # Still within timeout window, just wait
+                        elapsed = (now - sent_time).total_seconds() if sent_time else 0
+                        if elapsed > 60:  # Log every minute while waiting
+                            logging.debug(f"⏳ Entry Order {order_id} still pending ({elapsed:.0f}s)...")
                 
                 continue  # Skip remaining logic for OPENING positions
 
