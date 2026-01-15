@@ -128,7 +128,43 @@ with sys_col3:
 
 with sys_col4:
     positions = system_data.get('open_positions', 0)
-    st.metric("Open Positions", str(positions))
+    total_positions = system_data.get('total_positions', 0)
+    st.metric("Open Positions", f"{positions}/{total_positions}")
+
+st.markdown("---")
+
+# --- POSITIONS TABLE ---
+positions_list = system_data.get('positions', [])
+if positions_list:
+    st.markdown("### 📊 Active Positions")
+    
+    # Create DataFrame for better display
+    pos_data = []
+    for pos in positions_list:
+        pos_data.append({
+            'Symbol': pos.get('symbol', 'UNKNOWN'),
+            'Strategy': pos.get('strategy', 'UNKNOWN'),
+            'Status': pos.get('status', 'UNKNOWN'),
+            'Entry Price': f"${pos.get('entry_price', 0):.2f}",
+            'Legs': pos.get('legs_count', 0),
+            'Bias': pos.get('bias', 'neutral'),
+            'Trade ID': pos.get('trade_id', '')[:20] + '...' if len(pos.get('trade_id', '')) > 20 else pos.get('trade_id', '')
+        })
+    
+    if pos_data:
+        df = pd.DataFrame(pos_data)
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        
+        # Show order IDs if present
+        for pos in positions_list:
+            if 'open_order_id' in pos or 'close_order_id' in pos:
+                with st.expander(f"Order Details: {pos.get('symbol')} {pos.get('strategy')}"):
+                    if 'open_order_id' in pos:
+                        st.text(f"Open Order ID: {pos['open_order_id']}")
+                    if 'close_order_id' in pos:
+                        st.text(f"Close Order ID: {pos['close_order_id']}")
+else:
+    st.info("📭 No active positions tracked by Brain")
 
 st.markdown("---")
 

@@ -162,12 +162,35 @@ class MarketFeed:
         except: 
             pass
 
+        # Serialize positions for dashboard (exclude datetime objects)
+        serialized_positions = []
+        for trade_id, pos in self.open_positions.items():
+            # Include all positions (OPEN, OPENING, CLOSING, or no status for recovered)
+            serialized = {
+                'trade_id': trade_id,
+                'symbol': pos.get('symbol', 'UNKNOWN'),
+                'strategy': pos.get('strategy', 'UNKNOWN'),
+                'status': pos.get('status', 'OPEN'),  # Default to OPEN if missing (recovered positions)
+                'entry_price': pos.get('entry_price', 0),
+                'bias': pos.get('bias', 'neutral'),
+                'legs_count': len(pos.get('legs', [])),
+                'timestamp': pos.get('timestamp', '').isoformat() if isinstance(pos.get('timestamp'), datetime) else pos.get('timestamp', ''),
+            }
+            # Add order IDs if present
+            if 'open_order_id' in pos:
+                serialized['open_order_id'] = pos['open_order_id']
+            if 'close_order_id' in pos:
+                serialized['close_order_id'] = pos['close_order_id']
+            serialized_positions.append(serialized)
+        
         system_state = {
             'timestamp': datetime.now().isoformat(),
             'regime': regime,
             'portfolio_risk': self.portfolio_greeks,
             # Count truly active positions (OPEN or CLOSING, exclude OPENING positions waiting for fill)
-            'open_positions': sum(1 for p in self.open_positions.values() if p.get('status') in ['OPEN', 'CLOSING']),
+            'open_positions': sum(1 for p in self.open_positions.values() if p.get('status') in ['OPEN', 'CLOSING', None]),
+            'total_positions': len(self.open_positions),  # Total including OPENING
+            'positions': serialized_positions,  # Full position details for dashboard
             'status': 'CONNECTED' if self.is_connected else 'DISCONNECTED'
         }
 
