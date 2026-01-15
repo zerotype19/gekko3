@@ -1,0 +1,44 @@
+{
+  "IWM_IRON_CONDOR_RECOVERED_1768434961": {
+    "symbol": "IWM",
+    "strategy": "IRON_CONDOR",
+    "legs": [
+      {
+        "symbol": "IWM260213C00262000",
+        "expiration": "2026-02-13",
+        "strike": 262.0,
+        "type": "CALL",
+        "quantity": 1,
+        "side": "SELL"
+      },
+      {
+        "symbol": "IWM260213C00272000",
+        "expiration": "2026-02-13",
+        "strike": 272.0,
+        "type": "CALL",
+        "quantity": 1,
+        "side": "BUY"
+      },
+      {
+        "symbol": "IWM260213P00252000",
+        "expiration": "2026-02-13",
+        "strike": 252.0,
+        "type": "PUT",
+        "quantity": 1,
+        "side": "BUY"
+      },
+      {
+        "symbol": "IWM260213P00262000",
+        "expiration": "2026-02-13",
+        "strike": 262.0,
+        "type": "PUT",
+        "quantity": 7,
+        "side": "SELL"
+      }
+    ],
+    "entry_price": 51.62,
+    "bias": "neutral",
+    "timestamp": "2026-01-14T18:56:01.107575",
+    "highest_pnl": -100.0
+  }
+}

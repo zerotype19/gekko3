@@ -1,0 +1,59 @@
+{
+  "system": {
+    "timestamp": "2026-01-14T16:04:02.412109",
+    "regime": "TRENDING",
+    "portfolio_risk": {
+      "delta": 266.8336587991689,
+      "theta": 68.09211112045263,
+      "vega": -191.58445883214773
+    },
+    "open_positions": 1,
+    "status": "CONNECTED"
+  },
+  "market": {
+    "SPY": {
+      "price": 690.49,
+      "rsi": 57.76408782909078,
+      "adx": 38.911147879636246,
+      "iv_rank": 30.591918042117282,
+      "trend": "INSUFFICIENT_DATA",
+      "flow": "NEUTRAL",
+      "vix": 16.31,
+      "volume_velocity": 0.27312290944568757,
+      "active_signal": null
+    },
+    "QQQ": {
+      "price": 619.98,
+      "rsi": 61.342739956900466,
+      "adx": 44.10730685027904,
+      "iv_rank": 40.22302841420954,
+      "trend": "INSUFFICIENT_DATA",
+      "flow": "NEUTRAL",
+      "vix": 16.31,
+      "volume_velocity": 0.11600720069320743,
+      "active_signal": null
+    },
+    "IWM": {
+      "price": 263.24,
+      "rsi": 55.048427288456956,
+      "adx": 40.759527074193635,
+      "iv_rank": 55.95625032244729,
+      "trend": "INSUFFICIENT_DATA",
+      "flow": "NEUTRAL",
+      "vix": 16.31,
+      "volume_velocity": 0.012133021595565138,
+      "active_signal": null
+    },
+    "DIA": {
+      "price": 491.71000000000004,
+      "rsi": 58.56226233217942,
+      "adx": 34.81973765380208,
+      "iv_rank": 37.17112382130166,
+      "trend": "INSUFFICIENT_DATA",
+      "flow": "NEUTRAL",
+      "vix": 16.31,
+      "volume_velocity": 0.9568271712123323,
+      "active_signal": null
+    }
+  }
+}
