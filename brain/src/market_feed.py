@@ -925,7 +925,11 @@ class MarketFeed:
                                 logging.info(f"📝 SYNC: Updated {leg_symbol} quantity: {old_qty} -> {actual_qty}")
                     
                     # Recalculate entry_price for MANUAL_RECOVERY positions (fix incorrect calculations)
-                    if pos.get('strategy') == 'MANUAL_RECOVERY':
+                    # Always recalculate if entry_price seems suspiciously high (> $50 suggests wrong calculation)
+                    should_recalc = (pos.get('strategy') == 'MANUAL_RECOVERY' and 
+                                   (pos.get('entry_price', 0) > 50 or pos.get('entry_price', 0) < 0.01))
+                    
+                    if should_recalc:
                         old_entry = pos.get('entry_price', 0)
                         new_entry = await self._recalculate_entry_price_from_tradier(pos, actual_positions)
                         if new_entry and new_entry > 0 and abs(new_entry - old_entry) > 0.01:
