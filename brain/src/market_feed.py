@@ -1159,6 +1159,16 @@ class MarketFeed:
                     # Build set of Tradier position keys (by leg symbol)
                     tradier_symbols = {p.get('symbol') for p in option_positions if p.get('symbol')}
                     
+                    # Build Tradier position map for quantity comparison
+                    tradier_positions_map = {}
+                    for p in option_positions:
+                        symbol = p.get('symbol')
+                        if symbol:
+                            tradier_positions_map[symbol] = {
+                                'quantity': float(p.get('quantity', 0)),
+                                'cost_basis': float(p.get('cost_basis', 0))
+                            }
+                    
                     # Check for orphans (in Tradier but not in Brain)
                     brain_symbols = set()
                     for pos in self.open_positions.values():
@@ -1271,11 +1281,78 @@ class MarketFeed:
                         if to_remove:
                             self._save_positions_to_disk()
                     
-                    if not orphans and not ghosts:
-                        logging.info("✅ RECONCILIATION: Brain state matches Tradier")
+                    # QUANTITY AUDIT: Check for quantity mismatches (partial fills/closures)
+                    quantity_updates = 0
+                    unbalanced_positions = []
+                    
+                    for trade_id, pos in list(self.open_positions.items()):
+                        legs_updated = False
+                        leg_quantities_zero = []
+                        
+                        for leg in pos.get('legs', []):
+                            leg_symbol = leg.get('symbol')
+                            brain_qty = abs(int(leg.get('quantity', 0)))
+                            
+                            if leg_symbol in tradier_positions_map:
+                                tradier_qty = abs(int(tradier_positions_map[leg_symbol]['quantity']))
+                                
+                                if brain_qty != tradier_qty:
+                                    # Quantity mismatch detected
+                                    logging.warning(f"⚠️ Quantity mismatch for {trade_id} leg {leg_symbol}: "
+                                                  f"Brain={brain_qty}, Tradier={tradier_qty}. Syncing to Tradier.")
+                                    
+                                    # Update leg quantity to match Tradier
+                                    leg['quantity'] = tradier_qty
+                                    legs_updated = True
+                                    quantity_updates += 1
+                                    
+                                    # Check if this leg is now zero (unbalanced closure)
+                                    if tradier_qty == 0:
+                                        leg_quantities_zero.append(leg_symbol)
+                        
+                        # Handle unbalanced leg closures (some legs closed, others remain)
+                        if leg_quantities_zero:
+                            all_leg_symbols = {leg.get('symbol') for leg in pos.get('legs', [])}
+                            closed_legs = set(leg_quantities_zero)
+                            remaining_legs = all_leg_symbols - closed_legs
+                            
+                            if remaining_legs:
+                                # Partial closure: Some legs closed but others remain
+                                # This is dangerous - unbalanced position
+                                logging.error(f"🚨 UNBALANCED POSITION: {trade_id} has {len(closed_legs)} leg(s) closed "
+                                            f"but {len(remaining_legs)} leg(s) still open. This is a risk!")
+                                unbalanced_positions.append(trade_id)
+                                
+                                # Safety: Close the entire position to prevent "Legging Out" risk
+                                logging.warning(f"🛑 Closing unbalanced position {trade_id} to prevent risk")
+                                del self.open_positions[trade_id]
+                                quantity_updates += 1
+                            else:
+                                # All legs closed - this should have been caught by ghost detection
+                                # But handle it here as well
+                                logging.info(f"✅ All legs closed for {trade_id}. Removing.")
+                                del self.open_positions[trade_id]
+                        
+                        # Save updates if quantities changed
+                        if legs_updated and trade_id in self.open_positions:
+                            self._save_positions_to_disk()
+                            logging.info(f"💾 Updated quantities for {trade_id}")
+                    
+                    # Summary logging
+                    if not orphans and not ghosts and quantity_updates == 0:
+                        logging.info("✅ RECONCILIATION: Brain state matches Tradier (quantities verified)")
                     else:
-                        logging.info(f"✅ RECONCILIATION COMPLETE: Adopted {len(orphans) if orphans else 0} orphan(s), "
-                                   f"removed {len(ghosts) if ghosts else 0} ghost(s)")
+                        summary_parts = []
+                        if orphans:
+                            summary_parts.append(f"Adopted {len(orphans)} orphan(s)")
+                        if ghosts:
+                            summary_parts.append(f"removed {len(ghosts)} ghost(s)")
+                        if quantity_updates > 0:
+                            summary_parts.append(f"updated {quantity_updates} quantity mismatch(es)")
+                        if unbalanced_positions:
+                            summary_parts.append(f"closed {len(unbalanced_positions)} unbalanced position(s)")
+                        
+                        logging.info(f"✅ RECONCILIATION COMPLETE: {', '.join(summary_parts)}")
         
         except Exception as e:
             logging.error(f"❌ Reconciliation error: {e}")
