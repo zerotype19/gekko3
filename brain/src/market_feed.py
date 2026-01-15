@@ -12,6 +12,7 @@ import websockets
 import aiohttp
 import logging
 import os
+import re
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Set, List
 from dotenv import load_dotenv
@@ -80,6 +81,10 @@ class MarketFeed:
         # IV Poller (for IV Rank calculation)
         self.iv_poller_task: Optional[asyncio.Task] = None
         
+        # Connection Watchdog (Dead Man's Switch)
+        self.last_msg_time = datetime.now()
+        self.watchdog_task: Optional[asyncio.Task] = None
+        
         # Position Management (Smart Manager)
         self.open_positions: Dict[str, Dict] = {}
         self.position_manager_task: Optional[asyncio.Task] = None
@@ -98,6 +103,10 @@ class MarketFeed:
         
         # Load positions from disk on startup (survive restarts)
         self._load_positions_from_disk()
+        
+        # Startup Reconciliation (Adopt Orphans from Tradier)
+        # Run this asynchronously on first connect to avoid blocking init
+        self._needs_reconciliation = True
 
     # --- PERSISTENCE ---
     def _save_positions_to_disk(self):
@@ -466,7 +475,44 @@ class MarketFeed:
                     continue
                 
                 elif status == 'pending' or status == 'open' or status == 'partially_filled':
-                    # Check timeout
+                    # Smart Order Chasing: Check if price moved away
+                    # If price moved > 10 cents from order limit price, cancel and retry immediately
+                    order_limit_price = pos.get('close_limit_price')
+                    if order_limit_price:
+                        # Get current market price for the legs
+                        symbol = pos.get('symbol', '')
+                        leg_symbols = [leg['symbol'] for leg in pos.get('legs', [])]
+                        if leg_symbols:
+                            current_quotes = await self._get_quotes(leg_symbols)
+                            if current_quotes:
+                                # Calculate current cost to close (same logic as in _manage_positions)
+                                current_cost = 0.0
+                                for leg in pos['legs']:
+                                    quote_data = current_quotes.get(leg['symbol'])
+                                    if quote_data:
+                                        price = quote_data['price']
+                                        qty = float(leg['quantity'])
+                                        if leg['side'] == 'SELL':
+                                            current_cost += price * qty
+                                        else:
+                                            current_cost -= price * qty
+                                
+                                if current_cost > 0:
+                                    drift = abs(current_cost - order_limit_price)
+                                    if drift > 0.10:  # 10 cents away
+                                        logging.info(f"🏃 SMART CHASE: Price moved {drift:.2f} away for {trade_id}. "
+                                                   f"Order: ${order_limit_price:.2f}, Market: ${current_cost:.2f}. "
+                                                   f"Cancelling to re-price.")
+                                        if not pos.get('cancelling'):  # Only cancel once
+                                            cancel_success = await self._cancel_order(order_id)
+                                            if cancel_success:
+                                                pos['cancelling'] = True
+                                                pos['cancel_attempt_time'] = now.isoformat()
+                                                self._save_positions_to_disk()
+                                                await asyncio.sleep(5)  # Wait for cancellation
+                                            continue  # Skip timeout check for this cycle
+                    
+                    # Check timeout (fallback if price didn't move much)
                     sent_time = pos.get('closing_timestamp')
                     if sent_time:
                         # If pending for > 2 minutes, cancel and retry (likely price moved)
@@ -679,6 +725,202 @@ class MarketFeed:
             logging.error(f"Failed to fetch actual positions: {e}")
         return {}
 
+    async def reconcile_state(self):
+        """Startup Reconciliation (Adopt Orphans from Tradier)
+        Fetches all open positions from Tradier and reconciles with Brain's state:
+        - Adopts positions that exist in Tradier but not in Brain (orphans)
+        - Removes positions that exist in Brain but not in Tradier (ghosts)
+        """
+        logging.info("🕵️ STARTUP RECONCILIATION: Fetching positions from Tradier...")
+        
+        if not self.account_id:
+            await self._fetch_account_id()
+        if not self.account_id:
+            logging.warning("⚠️ Cannot reconcile: Account ID not available")
+            return
+        
+        try:
+            # Fetch all positions from Tradier
+            sandbox_api_base = "https://sandbox.tradier.com/v1"
+            headers = {'Authorization': f'Bearer {self.sandbox_token}', 'Accept': 'application/json'}
+            url = f"{sandbox_api_base}/accounts/{self.account_id}/positions"
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status != 200:
+                        logging.warning(f"⚠️ Reconciliation failed: {resp.status}")
+                        return
+                    
+                    data = await resp.json()
+                    positions = data.get('positions', {}).get('position', [])
+                    if positions == 'null' or not positions:
+                        positions = []
+                    
+                    pos_list = positions if isinstance(positions, list) else [positions]
+                    
+                    # Filter to only option positions
+                    option_positions = []
+                    for p in pos_list:
+                        symbol = p.get('symbol', '')
+                        if symbol and re.match(r'^[A-Z]+\d{6}[CP]\d{8}$', symbol):
+                            option_positions.append(p)
+                    
+                    logging.info(f"📊 Tradier has {len(option_positions)} option position(s)")
+                    
+                    # Group by underlying + expiration (same trade)
+                    def parse_option_symbol(opt_symbol):
+                        match = re.match(r'^([A-Z]+)(\d{6})([CP])(\d{8})$', opt_symbol)
+                        if match:
+                            root = match.group(1)
+                            date_str = match.group(2)
+                            opt_type = 'CALL' if match.group(3) == 'C' else 'PUT'
+                            strike_str = match.group(4)
+                            
+                            year = 2000 + int(date_str[0:2])
+                            month = int(date_str[2:4])
+                            day = int(date_str[4:6])
+                            expiration = f"{year:04d}-{month:02d}-{day:02d}"
+                            strike = float(strike_str) / 1000.0
+                            
+                            return root, expiration, opt_type, strike
+                        return None, None, None, None
+                    
+                    # Group positions by trade
+                    grouped_by_trade = {}
+                    for p in option_positions:
+                        symbol = p.get('symbol')
+                        root, exp, opt_type, strike = parse_option_symbol(symbol)
+                        if root:
+                            key = f"{root}_{exp}"
+                            if key not in grouped_by_trade:
+                                grouped_by_trade[key] = []
+                            grouped_by_trade[key].append({
+                                'raw': p,
+                                'symbol': symbol,
+                                'root': root,
+                                'expiration': exp,
+                                'type': opt_type,
+                                'strike': strike
+                            })
+                    
+                    # Build set of Tradier position keys (by leg symbol)
+                    tradier_symbols = {p.get('symbol') for p in option_positions if p.get('symbol')}
+                    
+                    # Check for orphans (in Tradier but not in Brain)
+                    brain_symbols = set()
+                    for pos in self.open_positions.values():
+                        for leg in pos.get('legs', []):
+                            brain_symbols.add(leg.get('symbol'))
+                    
+                    orphans = tradier_symbols - brain_symbols
+                    if orphans:
+                        logging.info(f"🕵️ ORPHAN DETECTED: Found {len(orphans)} position(s) in Tradier not tracked by Brain")
+                        # Group orphans by trade
+                        orphan_trades = {}
+                        for symbol in orphans:
+                            root, exp, opt_type, strike = parse_option_symbol(symbol)
+                            if root:
+                                key = f"{root}_{exp}"
+                                if key not in orphan_trades:
+                                    orphan_trades[key] = []
+                                # Find the position in grouped_by_trade
+                                for trade_key, legs in grouped_by_trade.items():
+                                    if trade_key == key:
+                                        for leg in legs:
+                                            if leg['symbol'] == symbol:
+                                                orphan_trades[key].append(leg)
+                        
+                        # Adopt orphans
+                        for trade_key, legs in orphan_trades.items():
+                            if not legs:
+                                continue
+                            
+                            root = legs[0]['root']
+                            expiration = legs[0]['expiration']
+                            
+                            # Determine strategy
+                            strategy = 'CREDIT_SPREAD' if len(legs) == 2 else \
+                                      'IRON_CONDOR' if len(legs) == 4 and \
+                                      len([l for l in legs if l['type'] == 'CALL']) == 2 else \
+                                      'IRON_BUTTERFLY' if len(legs) == 4 else \
+                                      'MANUAL_RECOVERY'
+                            
+                            # Build Brain leg format
+                            brain_legs = []
+                            total_cost = 0.0
+                            for leg in legs:
+                                qty = float(leg['raw'].get('quantity', 0))
+                                cost_basis = float(leg['raw'].get('cost_basis', 0))
+                                side = "SELL" if qty < 0 else "BUY"
+                                
+                                if qty < 0:
+                                    total_cost += abs(cost_basis / qty) * abs(qty)
+                                else:
+                                    total_cost -= abs(cost_basis / qty) * qty
+                                
+                                brain_legs.append({
+                                    'symbol': leg['symbol'],
+                                    'expiration': expiration,
+                                    'strike': leg['strike'],
+                                    'type': leg['type'],
+                                    'quantity': abs(int(qty)),
+                                    'side': side
+                                })
+                            
+                            # Determine bias
+                            bias = "neutral"
+                            if strategy == 'CREDIT_SPREAD' and len(legs) == 2:
+                                bias = 'bullish' if legs[0]['type'] == 'PUT' else 'bearish'
+                            
+                            entry_price = abs(total_cost) / 100.0 if total_cost != 0 else 1.0
+                            trade_id = f"{root}_{strategy}_RECOVERED_{int(datetime.now().timestamp())}"
+                            
+                            self.open_positions[trade_id] = {
+                                "symbol": root,
+                                "strategy": strategy,
+                                "status": "OPEN",  # Assume OPEN since it exists in Tradier
+                                "legs": brain_legs,
+                                "entry_price": round(entry_price, 2),
+                                "bias": bias,
+                                "timestamp": datetime.now(),
+                                "highest_pnl": -100.0
+                            }
+                            
+                            logging.info(f"✅ ADOPTED: {trade_id} ({strategy}, {len(legs)} legs, Entry: ${entry_price:.2f})")
+                        
+                        self._save_positions_to_disk()
+                    
+                    # Check for ghosts (in Brain but not in Tradier)
+                    ghosts = brain_symbols - tradier_symbols
+                    if ghosts:
+                        logging.info(f"👻 GHOST DETECTED: Found {len(ghosts)} position(s) in Brain but closed in Tradier")
+                        # Find positions with these symbols and remove them
+                        to_remove = []
+                        for trade_id, pos in self.open_positions.items():
+                            pos_symbols = {leg.get('symbol') for leg in pos.get('legs', [])}
+                            if pos_symbols.intersection(ghosts):
+                                # All legs of this position are closed in Tradier
+                                if pos_symbols.issubset(ghosts):
+                                    to_remove.append(trade_id)
+                        
+                        for trade_id in to_remove:
+                            logging.info(f"🗑️ Removing ghost position: {trade_id}")
+                            del self.open_positions[trade_id]
+                        
+                        if to_remove:
+                            self._save_positions_to_disk()
+                    
+                    if not orphans and not ghosts:
+                        logging.info("✅ RECONCILIATION: Brain state matches Tradier")
+                    else:
+                        logging.info(f"✅ RECONCILIATION COMPLETE: Adopted {len(orphans) if orphans else 0} orphan(s), "
+                                   f"removed {len(ghosts) if ghosts else 0} ghost(s)")
+        
+        except Exception as e:
+            logging.error(f"❌ Reconciliation error: {e}")
+            import traceback
+            traceback.print_exc()
+
     async def _execute_close(self, trade_id: str, pos: Dict, limit_price: float):
         """Send CLOSE order and track it - uses ACTUAL Tradier positions for quantities"""
         # CRITICAL: Fetch actual positions from Tradier to get correct quantities
@@ -765,6 +1007,7 @@ class MarketFeed:
             if order_id:
                 pos['status'] = 'CLOSING'
                 pos['close_order_id'] = str(order_id)
+                pos['close_limit_price'] = execution_price  # Store for smart chasing
                 pos['closing_timestamp'] = datetime.now()
                 self._save_positions_to_disk()
                 logging.info(f"📤 Close Order Sent: {order_id}. Waiting for fill...")
@@ -837,6 +1080,16 @@ class MarketFeed:
                 if not self.iv_poller_task:
                     self.iv_poller_task = asyncio.create_task(self._poll_iv_loop())
                 
+                # Start Connection Watchdog (Dead Man's Switch)
+                if not self.watchdog_task:
+                    self.last_msg_time = datetime.now()  # Reset on connect
+                    self.watchdog_task = asyncio.create_task(self._monitor_watchdog())
+                
+                # Startup Reconciliation (Adopt Orphans from Tradier)
+                if self._needs_reconciliation:
+                    self._needs_reconciliation = False
+                    asyncio.create_task(self.reconcile_state())
+                
                 async with websockets.connect(TRADIER_WS_URL) as websocket:
                     self.ws = websocket
                     self.connected = True
@@ -869,8 +1122,44 @@ class MarketFeed:
         self.is_connected = False
         if self.ws: 
             await self.ws.close()
+        # Stop watchdog
+        if self.watchdog_task:
+            self.watchdog_task.cancel()
+
+    async def _monitor_watchdog(self):
+        """Connection Watchdog (Dead Man's Switch)
+        Monitors WebSocket activity and forces reconnect if silence > 60s"""
+        while not self.stop_signal:
+            try:
+                await asyncio.sleep(10)  # Check every 10 seconds
+                
+                if self.stop_signal:
+                    break
+                
+                now = datetime.now()
+                silence_seconds = (now - self.last_msg_time).total_seconds()
+                
+                if silence_seconds > 60:
+                    logging.warning(f"⚠️ WATCHDOG: No data for {int(silence_seconds)}s. Resetting connection...")
+                    # Force reconnect by stopping the current connection loop
+                    self.stop_signal = True
+                    self.is_connected = False
+                    if self.ws:
+                        try:
+                            await self.ws.close()
+                        except:
+                            pass
+                    # Reset watchdog timestamp
+                    self.last_msg_time = datetime.now()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logging.error(f"Watchdog error: {e}")
 
     async def _handle_message(self, data: dict):
+        # Update watchdog timestamp on any message
+        self.last_msg_time = datetime.now()
+        
         if data.get('type') == 'trade':
             await self._handle_trade(data)
             if data.get('symbol'): 
