@@ -813,17 +813,32 @@ class MarketFeed:
         total_theta = 0.0
         total_vega = 0.0
         count = 0
+        positions_without_greeks = []
         for pos in self.open_positions.values():
             # Only count truly open positions (exclude OPENING/CLOSING)
-            if pos.get('status') == 'OPEN':
+            # Also include positions with no status (recovered positions default to OPEN)
+            status = pos.get('status')
+            if status == 'OPEN' or status is None:
                 greeks = pos.get('live_greeks', {})
-                total_delta += greeks.get('delta', 0)
-                total_theta += greeks.get('theta', 0)
-                total_vega += greeks.get('vega', 0)
+                delta = greeks.get('delta', 0)
+                theta = greeks.get('theta', 0)
+                vega = greeks.get('vega', 0)
+                
+                # Check if Greeks are still zero (might not have been calculated yet)
+                if delta == 0 and theta == 0 and vega == 0:
+                    positions_without_greeks.append(pos.get('symbol', 'UNKNOWN'))
+                
+                total_delta += delta
+                total_theta += theta
+                total_vega += vega
                 count += 1
+        
         self.portfolio_greeks = {'delta': total_delta, 'theta': total_theta, 'vega': total_vega}
         if count > 0:
-            logging.debug(f"📊 PORTFOLIO RISK: Delta {total_delta:+.1f} | Theta {total_theta:+.1f} | Vega {total_vega:+.1f} | Positions: {count}")
+            if positions_without_greeks:
+                logging.warning(f"⚠️ Portfolio Greeks: {len(positions_without_greeks)} position(s) have zero Greeks "
+                              f"(may not have quotes yet): {', '.join(set(positions_without_greeks))}")
+            logging.info(f"📊 PORTFOLIO RISK: Delta {total_delta:+.1f} | Theta {total_theta:+.1f} | Vega {total_vega:+.1f} | Positions: {count}")
 
     async def _get_actual_positions(self) -> Dict[str, Dict]:
         """Fetch actual current positions from Tradier to verify quantities/sides"""
@@ -1254,7 +1269,8 @@ class MarketFeed:
                                 "entry_price": round(entry_price, 2),
                                 "bias": bias,
                                 "timestamp": datetime.now(),
-                                "highest_pnl": -100.0
+                                "highest_pnl": -100.0,
+                                "live_greeks": {'delta': 0.0, 'theta': 0.0, 'vega': 0.0}  # Initialize, will be calculated on next _manage_positions cycle
                             }
                             
                             logging.info(f"✅ ADOPTED: {trade_id} ({strategy}, {len(legs)} legs, Entry: ${entry_price:.2f}, Net Credit: ${net_credit:.2f})")

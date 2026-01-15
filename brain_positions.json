@@ -1,5 +1,5 @@
 {
-  "DIA_CREDIT_SPREAD_RECOVERED_1768501130": {
+  "DIA_CREDIT_SPREAD_RECOVERED_1768502094": {
     "symbol": "DIA",
     "strategy": "CREDIT_SPREAD",
     "legs": [
@@ -22,10 +22,10 @@
     ],
     "entry_price": 6.22,
     "bias": "bullish",
-    "timestamp": "2026-01-15T13:18:50.191700",
+    "timestamp": "2026-01-15T13:34:54.087940",
     "highest_pnl": -100.0
   },
-  "IWM_MANUAL_RECOVERY_RECOVERED_1768501130": {
+  "IWM_MANUAL_RECOVERY_RECOVERED_1768502094": {
     "symbol": "IWM",
     "strategy": "MANUAL_RECOVERY",
     "legs": [
@@ -96,10 +96,10 @@
     ],
     "entry_price": 72.98,
     "bias": "neutral",
-    "timestamp": "2026-01-15T13:18:50.191733",
+    "timestamp": "2026-01-15T13:34:54.087979",
     "highest_pnl": -100.0
   },
-  "QQQ_MANUAL_RECOVERY_RECOVERED_1768501130": {
+  "QQQ_MANUAL_RECOVERY_RECOVERED_1768502094": {
     "symbol": "QQQ",
     "strategy": "MANUAL_RECOVERY",
     "legs": [
@@ -146,13 +146,21 @@
     ],
     "entry_price": 34.66,
     "bias": "neutral",
-    "timestamp": "2026-01-15T13:18:50.191753",
+    "timestamp": "2026-01-15T13:34:54.088004",
     "highest_pnl": -100.0
   },
-  "SPY_CREDIT_SPREAD_RECOVERED_1768501130": {
+  "SPY_MANUAL_RECOVERY_RECOVERED_1768502094": {
     "symbol": "SPY",
-    "strategy": "CREDIT_SPREAD",
+    "strategy": "MANUAL_RECOVERY",
     "legs": [
+      {
+        "symbol": "SPY260213P00662000",
+        "expiration": "2026-02-13",
+        "strike": 662.0,
+        "type": "PUT",
+        "quantity": 2,
+        "side": "BUY"
+      },
       {
         "symbol": "SPY260213P00663000",
         "expiration": "2026-02-13",
@@ -166,13 +174,13 @@
         "expiration": "2026-02-13",
         "strike": 683.0,
         "type": "PUT",
-        "quantity": 1,
+        "quantity": 2,
         "side": "SELL"
       }
     ],
-    "entry_price": 11.04,
-    "bias": "bullish",
-    "timestamp": "2026-01-15T13:18:50.191765",
+    "entry_price": 21.74,
+    "bias": "neutral",
+    "timestamp": "2026-01-15T13:34:54.088023",
     "highest_pnl": -100.0
   }
 }
