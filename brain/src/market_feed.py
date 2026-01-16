@@ -1641,20 +1641,24 @@ class MarketFeed:
                     orphans = tradier_symbols - brain_symbols
                     if orphans:
                         logging.info(f"🕵️ ORPHAN DETECTED: Found {len(orphans)} position(s) in Tradier not tracked by Brain")
-                        # Group orphans by trade
+                        # Group orphans by trade - CRITICAL: Adopt entire trade if ANY leg is orphaned
                         orphan_trades = {}
+                        orphan_trade_keys = set()
+                        
+                        # First pass: Identify which trades have orphaned legs
                         for symbol in orphans:
                             root, exp, opt_type, strike = parse_option_symbol(symbol)
                             if root:
                                 key = f"{root}_{exp}"
-                                if key not in orphan_trades:
-                                    orphan_trades[key] = []
-                                # Find the position in grouped_by_trade
-                                for trade_key, legs in grouped_by_trade.items():
-                                    if trade_key == key:
-                                        for leg in legs:
-                                            if leg['symbol'] == symbol:
-                                                orphan_trades[key].append(leg)
+                                orphan_trade_keys.add(key)
+                        
+                        # Second pass: For each orphaned trade, add ALL legs (not just orphaned ones)
+                        # This ensures we adopt complete trades, not partial positions
+                        for trade_key in orphan_trade_keys:
+                            if trade_key in grouped_by_trade:
+                                # Add ALL legs of this trade (complete trade adoption)
+                                orphan_trades[trade_key] = grouped_by_trade[trade_key]
+                                logging.info(f"   Found orphaned trade: {trade_key} with {len(orphan_trades[trade_key])} leg(s)")
                         
                         # Adopt orphans
                         for trade_key, legs in orphan_trades.items():
