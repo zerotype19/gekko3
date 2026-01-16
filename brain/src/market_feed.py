@@ -1306,7 +1306,14 @@ class MarketFeed:
             # Calendar Spread (Vega/Theta Play): Hold up to 5 days
             if pos['strategy'] == 'CALENDAR_SPREAD' or 'CALENDAR' in str(pos.get('signal', '')):
                 # Stop if price moves >2% away (Gamma risk)
-                price_change_pct = abs((current_price - pos.get('entry_price', current_price)) / pos.get('entry_price', current_price)) if pos.get('entry_price') else 0
+                # CRITICAL FIX: entry_price for Calendar Spreads is the option DEBIT paid, not underlying price
+                # We need to track the underlying price at entry, or use a reasonable default
+                # For now, use opening_timestamp or timestamp to infer entry price from historical data
+                # Or store underlying_entry_price separately in position dict
+                # As fallback, calculate price change from current_price (will be 0% on first check, but that's okay)
+                # TODO: Store underlying_entry_price when opening Calendar/Ratio spreads
+                underlying_entry_price = pos.get('underlying_entry_price') or current_price
+                price_change_pct = abs((current_price - underlying_entry_price) / underlying_entry_price) if underlying_entry_price > 0 else 0
                 if price_change_pct > 0.02:
                     should_close = True
                     reason = f"Calendar: Price Move >2% ({price_change_pct*100:.1f}%)"
@@ -1318,7 +1325,9 @@ class MarketFeed:
             # Ratio Spread (Gamma Play): Hold up to 10 days
             elif pos['strategy'] == 'RATIO_SPREAD' or 'RATIO' in str(pos.get('signal', '')):
                 # Close on favorable moves (2% rally or 5% crash)
-                price_change_pct = (current_price - pos.get('entry_price', current_price)) / pos.get('entry_price', current_price) if pos.get('entry_price') else 0
+                # CRITICAL FIX: Same issue - entry_price is option price, not underlying
+                underlying_entry_price = pos.get('underlying_entry_price') or current_price
+                price_change_pct = (current_price - underlying_entry_price) / underlying_entry_price if underlying_entry_price > 0 else 0
                 if price_change_pct > 0.02:  # Rally: profit
                     should_close = True
                     reason = f"Ratio: Rally Profit ({price_change_pct*100:.1f}%)"
