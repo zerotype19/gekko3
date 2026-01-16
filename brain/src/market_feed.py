@@ -1342,8 +1342,15 @@ class MarketFeed:
             # Credit Spread / Iron Condor: Multi-day hold with proper stops
             elif pos['strategy'] in ['CREDIT_SPREAD', 'IRON_CONDOR', 'IRON_BUTTERFLY']:
                 # Stop loss if price moves >1.5% against bias (only for directional strategies)
+                # For credit spreads, we want to track underlying price moves, not option price
+                # Use underlying_entry_price if available, otherwise fallback to current_price (for backward compatibility)
+                # entry_price is option credit received, not underlying stock price
                 if pos.get('bias') in ['bullish', 'bearish']:
-                    price_change_pct = (current_price - pos.get('entry_price', current_price)) / pos.get('entry_price', current_price) if pos.get('entry_price') else 0
+                    underlying_entry_price = pos.get('underlying_entry_price')
+                    if not underlying_entry_price:
+                        # Fallback: Use current_price (will be 0% on first check, but that's acceptable)
+                        underlying_entry_price = current_price
+                    price_change_pct = (current_price - underlying_entry_price) / underlying_entry_price if underlying_entry_price > 0 else 0
                     if pos.get('bias') == 'bullish' and price_change_pct < -0.015:
                         should_close = True
                         reason = f"Credit: Stop Loss ({price_change_pct*100:.1f}%)"
@@ -3515,6 +3522,10 @@ class MarketFeed:
             
             if order_id:
                 signal_time = datetime.now()
+                # CRITICAL: Store underlying entry price for price move calculations
+                # entry_price is option credit received, not underlying stock price
+                underlying_entry_price = indicators.get('price', 0)  # Current underlying price at entry
+                
                 self.open_positions[trade_id] = {
                     'symbol': symbol,
                     'strategy': strategy,
@@ -3522,7 +3533,8 @@ class MarketFeed:
                     'open_order_id': str(order_id),
                     'opening_timestamp': signal_time,
                     'legs': proposal['legs'],  # Contains the specific option symbols
-                    'entry_price': proposal['price'],
+                    'entry_price': proposal['price'],  # Option credit received
+                    'underlying_entry_price': round(underlying_entry_price, 2) if underlying_entry_price > 0 else None,  # Underlying stock price at entry
                     'bias': bias,
                     'timestamp': signal_time,
                     'highest_pnl': -100.0,  # Initialize for Trailing Stop tracking
