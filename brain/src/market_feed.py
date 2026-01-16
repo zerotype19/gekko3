@@ -2992,6 +2992,11 @@ class MarketFeed:
 
         fair_credit = short_bid - long_ask
         limit_price = max(0.05, fair_credit - 0.05)  # 5 cent buffer
+        
+        # CRITICAL FIX: Explicitly set order type for credit spreads
+        # Credit spreads are always CREDIT orders (we receive money)
+        # This ensures GatekeeperDO doesn't default incorrectly
+        order_type = 'credit'  # Credit spreads always receive net credit
 
         # 5. Real Metrics (No Stubs)
         vix = indicators.get('vix') or 0
@@ -3028,6 +3033,7 @@ class MarketFeed:
             'side': side,
             'quantity': qty,  # Dynamic quantity based on risk
             'price': round(limit_price, 2),
+            'type': order_type,  # CRITICAL: Explicitly tell Gatekeeper this is a credit order
             'legs': [
                 {
                     'symbol': short_leg['symbol'],
@@ -3203,12 +3209,21 @@ class MarketFeed:
                 else:
                     net_price_total -= price * leg['quantity']
         
+        # CRITICAL FIX: Determine Order Type (Credit vs Debit)
+        # Net > 0 = Credit (We receive money) - e.g., Credit Spreads, Iron Condors
+        # Net < 0 = Debit (We pay money) - e.g., Calendar Spreads, Ratio Backspreads (usually small debit)
+        # Without this, GatekeeperDO defaults to 'credit' for all OPEN orders, causing debit trades to fail
+        order_type = 'credit' if net_price_total >= 0 else 'debit'
+        
         # CRITICAL: Normalize to Per-Unit Price (Gatekeeper/Tradier expects price per strategy unit)
         # Without normalization: net_price_total = $5.00 (total for 5 contracts)
         #                     Would send: price=$5.00 → Asking for $5.00 PER UNIT (wrong!)
         # With normalization: limit_price = $5.00 / 5 = $1.00 → Correct per-unit price
         # Note: For Ratio Spreads, qty is the 'base' unit, so this logic holds
         limit_price = abs(net_price_total) / qty if qty > 0 else 0.0
+        
+        # Log order type decision for audit
+        logging.info(f"💰 ORDER TYPE ({strategy}): Net ${net_price_total:+.2f} → Type: {order_type} | Limit: ${limit_price:.2f}")
         
         # Construct Context
         context = {
@@ -3226,6 +3241,7 @@ class MarketFeed:
             'side': side,
             'quantity': qty,  # Dynamic quantity based on risk
             'price': round(limit_price, 2),  # Now correctly scaled to actual quantity
+            'type': order_type,  # CRITICAL: Explicitly tell Gatekeeper if this is credit or debit
             'legs': updated_legs,  # Updated with dynamic quantities
             'context': context
         }
