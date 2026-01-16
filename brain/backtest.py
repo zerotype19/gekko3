@@ -36,6 +36,7 @@ class BacktestTrade:
         self.size = size
         self.exit_price = None
         self.exit_time = None
+        self.exit_reason = None # Track why we closed
         self.status = 'OPEN'
         self.pnl = 0.0
         self.return_pct = 0.0
@@ -43,7 +44,7 @@ class BacktestTrade:
         self.regime = regime
         self.vix_at_entry = vix_at_entry or 15.0
         
-        # Strategy Assumptions (Standardized for Backtest)
+        # Strategy Assumptions
         self.spread_width = 5.0  
         self.credit_received = 0.50 
         
@@ -64,11 +65,12 @@ class BacktestTrade:
             self.target_dte = 30
             self.type = 'THETA_SHORT'
 
-    def close(self, exit_price, exit_time):
+    def close(self, exit_price, exit_time, reason="UNKNOWN"):
         """Calculate P&L based on Strategy Type (Mark-to-Market)"""
         self.exit_price = exit_price
         self.exit_time = exit_time
         self.status = 'CLOSED'
+        self.exit_reason = reason
         
         pct_change = (exit_price - self.entry_price) / self.entry_price
         time_delta = exit_time - self.entry_time
@@ -81,11 +83,10 @@ class BacktestTrade:
             # A. Directional Risk (Gamma)
             price_move = abs(pct_change)
             direction_loss = 0
-            if price_move > 0.015: # Widened breakeven slightly
+            if price_move > 0.015: 
                 direction_loss = (price_move - 0.015) * 100 * self.size * 25
             
             # B. Volatility Profit (Vega)
-            # Assume mean reversion of VIX generates profit
             vol_profit = 0
             if self.vix_at_entry < 14:
                 vol_profit = 40.0 * self.size * days_held * 0.5 
@@ -123,7 +124,7 @@ class BacktestTrade:
             
             if self.bias == 'BULLISH': delta_pnl = price_diff * 100 * net_delta
             elif self.bias == 'BEARISH': delta_pnl = -price_diff * 100 * net_delta
-            else: delta_pnl = -abs(price_diff) * 100 * net_delta
+            else: delta_pnl = -abs(price_diff) * 100 * net_delta # Neutral: Any move hurts
                 
             estimated = (theta_gain + delta_pnl) * self.size
             max_daily_gain = (max_profit / 30) * (days_held + 2) 
@@ -145,12 +146,13 @@ class BacktestAccountant:
 
     def log_trade(self, trade):
         self.trades.append(trade)
-        print(f"💰 [OPEN] {trade.signal} ({trade.strategy}) Size:{trade.size} @ ${trade.entry_price:.2f} (VIX: {trade.vix_at_entry:.2f})")
+        print(f"💰 [OPEN] {trade.signal} ({trade.strategy}) Size:{trade.size} @ ${trade.entry_price:.2f}")
 
     def close_trade(self, trade):
         self.closed_trades.append(trade)
         self.equity += trade.pnl
-        print(f"🔒 [CLOSE] {trade.signal} P&L: ${trade.pnl:.2f} | Equity: ${self.equity:,.2f}")
+        # Log with Reason
+        print(f"🔒 [CLOSE - {trade.exit_reason}] {trade.signal} P&L: ${trade.pnl:.2f} | Equity: ${self.equity:,.2f}")
 
     def get_summary(self):
         if not self.closed_trades: return "No trades closed."
@@ -251,43 +253,63 @@ async def run_backtest(symbol: str = 'SPY', days: int = 20):
         
         # Update VIX
         vix_val = vix_map.get(ts.floor('min'))
-        if not vix_val and idx > 0 and vix_map: 
-             pass 
         if vix_val: engine.set_vix(vix_val, ts)
         current_vix = engine.get_vix() or 20.0
         
         # Check Exits (MULTI-DAY LOGIC)
         for trade in open_trades[:]:
             should_close = False
+            close_reason = "UNKNOWN"
             
-            # Force Close if Expired (simplified simulation)
+            # 1. Expiration Force Close
             days_held = (ts - trade.entry_time).days
-            if days_held > trade.target_dte: should_close = True
+            if days_held > trade.target_dte: 
+                should_close = True
+                close_reason = "EXPIRED"
             
             pct_move = (price - trade.entry_price) / trade.entry_price
             
-            # Strategy Specific Stops
+            # 2. Strategy Specific Management
             if 'CALENDAR' in trade.strategy:
                 # Stop if price moves too far (>2%) or held > 5 days (profit taking)
-                if abs(pct_move) > 0.02: should_close = True
-                if days_held >= 5: should_close = True
+                if abs(pct_move) > 0.02: 
+                    should_close = True
+                    close_reason = "STOP_LOSS_PRICE"
+                elif days_held >= 5: 
+                    should_close = True
+                    close_reason = "TAKE_PROFIT_TIME"
                 
             elif 'RATIO' in trade.strategy:
                 # Close if rally (profit) or huge crash (profit)
-                if pct_move > 0.02: should_close = True 
-                if pct_move < -0.05: should_close = True
-                # Time stop if stuck (10 days)
-                if days_held >= 10: should_close = True
+                if pct_move > 0.02: 
+                    should_close = True 
+                    close_reason = "TAKE_PROFIT_RALLY"
+                elif pct_move < -0.05: 
+                    should_close = True
+                    close_reason = "TAKE_PROFIT_CRASH"
+                elif days_held >= 10: 
+                    should_close = True
+                    close_reason = "TIME_STOP"
                 
             else: # Credit Spread / Condor
                 # Stop loss if price moves > 1.5% against bias
-                if trade.bias == 'BULLISH' and pct_move < -0.015: should_close = True
-                elif trade.bias == 'BEARISH' and pct_move > 0.015: should_close = True
+                if trade.bias == 'BULLISH' and pct_move < -0.015: 
+                    should_close = True
+                    close_reason = "STOP_LOSS"
+                elif trade.bias == 'BEARISH' and pct_move > 0.015: 
+                    should_close = True
+                    close_reason = "STOP_LOSS"
+                # FIX: Iron Condor Stop Loss (Neutral)
+                elif trade.bias == 'NEUTRAL' and abs(pct_move) > 0.015:
+                    should_close = True
+                    close_reason = "STOP_LOSS_NEUTRAL"
                 # Take profit (Theta capture) after 5 days
-                if days_held >= 5: should_close = True
+                elif days_held >= 5: 
+                    should_close = True
+                    close_reason = "TAKE_PROFIT_TIME"
             
             if should_close:
-                trade.close(price, ts)
+                trade.close(price, ts, close_reason)
                 accountant.close_trade(trade)
                 open_trades.remove(trade)
 
@@ -299,7 +321,7 @@ async def run_backtest(symbol: str = 'SPY', days: int = 20):
             
         current_regime = regime_engine.get_regime(symbol)
         
-        # Cooldown (2 hours for same symbol to avoid spamming)
+        # Cooldown (2 hours)
         last = last_proposal_time.get(symbol)
         if last and (ts - last).total_seconds() < 7200: continue
         
@@ -334,7 +356,6 @@ async def run_backtest(symbol: str = 'SPY', days: int = 20):
             
             if poc > 0:
                 use_skew = current_vix < 13
-                
                 if trend == 'UPTREND':
                     if (price > vah and rsi < 60) or (price > poc and price < vah and rsi < 30):
                         if use_skew:
@@ -343,7 +364,6 @@ async def run_backtest(symbol: str = 'SPY', days: int = 20):
                         else:
                             signal = 'BULL_PUT_SPREAD'
                             strategy = 'CREDIT_SPREAD'
-                            
                 elif trend == 'DOWNTREND':
                     if (price < val and rsi > 40) or (price < poc and price > val and rsi > 70):
                         signal = 'BEAR_CALL_SPREAD'
