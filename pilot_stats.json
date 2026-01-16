@@ -47,6 +47,21 @@
       "timestamp": "2026-01-16T10:11:00.123651",
       "old_regime": "LOW_VOL_CHOP",
       "new_regime": "TRENDING"
+    },
+    {
+      "timestamp": "2026-01-16T10:17:00.015596",
+      "old_regime": "LOW_VOL_CHOP",
+      "new_regime": "TRENDING"
+    },
+    {
+      "timestamp": "2026-01-16T10:19:00.068567",
+      "old_regime": "LOW_VOL_CHOP",
+      "new_regime": "TRENDING"
+    },
+    {
+      "timestamp": "2026-01-16T10:22:38.208034",
+      "old_regime": "LOW_VOL_CHOP",
+      "new_regime": "TRENDING"
     }
   ],
   "latency_log": [
