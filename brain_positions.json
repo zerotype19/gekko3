@@ -24,15 +24,15 @@
     "bias": "bullish",
     "timestamp": "2026-01-15T16:03:26.186257",
     "highest_pnl": 94.77491961414792,
-    "status": "CLOSING",
+    "status": "OPEN",
     "live_greeks": {
       "delta": 1.309226670329032,
       "theta": -14.487616034729616,
       "vega": 8.796306341662444
     },
     "close_limit_price": 0.3950000000000002,
-    "close_order_id": "24415591",
-    "closing_timestamp": "2026-01-16T10:18:52.179545",
-    "cancel_attempt_time": "2026-01-16T10:28:55.445174"
+    "cancel_attempt_time": "2026-01-16T10:41:53.576007",
+    "cancel_failed_count": 10,
+    "unfillable": true
   }
 }
