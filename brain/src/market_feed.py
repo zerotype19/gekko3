@@ -1330,6 +1330,14 @@ class MarketFeed:
                     continue
                 
                 logging.info(f"🛑 ATTEMPTING CLOSE {trade_id} | P&L: {pnl_pct:.1f}% | Reason: {reason}")
+                
+                # CRITICAL: Sync positions with Tradier BEFORE attempting to close
+                # This ensures we have the latest state and prevents "position not found" warnings
+                # when positions were just filled/closed but sync hasn't caught up
+                logging.info(f"🔄 Syncing positions with Tradier before closing {trade_id}...")
+                await self.sync_positions_with_tradier()
+                
+                # Now execute the close with fresh position data
                 await self._execute_close(trade_id, pos, cost_to_close)
         
         self._log_portfolio_risk()
