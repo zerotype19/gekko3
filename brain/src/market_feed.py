@@ -1037,10 +1037,65 @@ class MarketFeed:
                 if pnl_pct <= -100: 
                     should_close = True
                     reason = "Stop Loss (-100%)"
-
-            if now.hour == 15 and now.minute >= 55:
+            
+            # --- MULTI-DAY STRATEGY EXIT LOGIC (Calendar/Ratio) ---
+            # Calculate days held
+            entry_time = pos.get('timestamp') or pos.get('opening_timestamp') or now
+            if isinstance(entry_time, str):
+                try:
+                    entry_time = datetime.fromisoformat(entry_time)
+                except:
+                    entry_time = now
+            days_held = (now - entry_time).total_seconds() / 86400.0
+            
+            # Calendar Spread (Vega/Theta Play): Hold up to 5 days
+            if pos['strategy'] == 'CALENDAR_SPREAD' or 'CALENDAR' in str(pos.get('signal', '')):
+                # Stop if price moves >2% away (Gamma risk)
+                price_change_pct = abs((current_price - pos.get('entry_price', current_price)) / pos.get('entry_price', current_price)) if pos.get('entry_price') else 0
+                if price_change_pct > 0.02:
+                    should_close = True
+                    reason = f"Calendar: Price Move >2% ({price_change_pct*100:.1f}%)"
+                # Take profit after 5 days (Theta capture)
+                if days_held >= 5:
+                    should_close = True
+                    reason = "Calendar: Time Profit (5 days)"
+            
+            # Ratio Spread (Gamma Play): Hold up to 10 days
+            elif pos['strategy'] == 'RATIO_SPREAD' or 'RATIO' in str(pos.get('signal', '')):
+                # Close on favorable moves (2% rally or 5% crash)
+                price_change_pct = (current_price - pos.get('entry_price', current_price)) / pos.get('entry_price', current_price) if pos.get('entry_price') else 0
+                if price_change_pct > 0.02:  # Rally: profit
+                    should_close = True
+                    reason = f"Ratio: Rally Profit ({price_change_pct*100:.1f}%)"
+                elif price_change_pct < -0.05:  # Crash: profit
+                    should_close = True
+                    reason = f"Ratio: Crash Profit ({price_change_pct*100:.1f}%)"
+                # Time stop if stuck (10 days)
+                if days_held >= 10:
+                    should_close = True
+                    reason = "Ratio: Time Stop (10 days)"
+            
+            # Credit Spread / Iron Condor: Multi-day hold with proper stops
+            elif pos['strategy'] in ['CREDIT_SPREAD', 'IRON_CONDOR', 'IRON_BUTTERFLY']:
+                # Stop loss if price moves >1.5% against bias (only for directional strategies)
+                if pos.get('bias') in ['bullish', 'bearish']:
+                    price_change_pct = (current_price - pos.get('entry_price', current_price)) / pos.get('entry_price', current_price) if pos.get('entry_price') else 0
+                    if pos.get('bias') == 'bullish' and price_change_pct < -0.015:
+                        should_close = True
+                        reason = f"Credit: Stop Loss ({price_change_pct*100:.1f}%)"
+                    elif pos.get('bias') == 'bearish' and price_change_pct > 0.015:
+                        should_close = True
+                        reason = f"Credit: Stop Loss ({price_change_pct*100:.1f}%)"
+                # Take profit after 5 days (Theta capture) for term structures (not 0DTE)
+                if not is_scalper and days_held >= 5:
+                    should_close = True
+                    reason = "Credit: Time Profit (5 days)"
+            
+            # --- EOD EXIT: ONLY for 0DTE (Scalper) strategies ---
+            # Multi-day strategies (Calendar/Ratio/Credit) are allowed to hold overnight
+            if is_scalper and now.hour == 15 and now.minute >= 55:
                 should_close = True
-                reason = "EOD Auto-Close"
+                reason = "EOD Auto-Close (0DTE)"
 
             if should_close:
                 # Check if we need to wait before retrying (after cancellation/rejection)

@@ -45,7 +45,7 @@ export const CONSTITUTION: RiskConfig = {
 
   // Execution Constraints
   staleProposalMs: 10000,       // Reject orders older than 10 seconds
-  forceEodCloseEt: '15:45',     // Hard close at 3:45 PM ET
+  forceEodCloseEt: null,        // Disabled to allow Multi-Day strategies (Calendar/Ratio)
 };
 
 /**

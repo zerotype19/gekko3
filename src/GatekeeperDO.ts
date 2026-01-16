@@ -1055,8 +1055,15 @@ export class GatekeeperDO {
 
   /**
    * Enforce End-of-Day: Close all positions before market close
+   * DISABLED: Multi-day strategies (Calendar/Ratio) require overnight holding
    */
   async enforceEOD(): Promise<void> {
+    // EOD enforcement disabled to allow multi-day strategies
+    // The Brain now handles EOD exits only for 0DTE (Scalper) strategies
+    if (!CONSTITUTION.forceEodCloseEt) {
+      return; // Multi-day mode: no forced EOD close
+    }
+    
     const currentTime = getCurrentTimeET();
     const [closeHour, closeMinute] = CONSTITUTION.forceEodCloseEt.split(':').map(Number);
 
