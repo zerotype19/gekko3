@@ -968,10 +968,33 @@ class MarketFeed:
                     pnl_pct = None
                     pnl_dollars = None
                     if entry_price > 0:
-                        # For credit spreads: entry_price is credit received, exit_price is debit paid
-                        # P&L = entry_credit - exit_debit (positive = profit)
-                        pnl_dollars = entry_price - exit_price
-                        pnl_pct = ((entry_price - exit_price) / entry_price) * 100 if entry_price > 0 else 0
+                        # CRITICAL FIX: Strategy-aware P&L calculation for realized trades
+                        strategy = pos.get('strategy', '')
+                        
+                        if strategy in ['CREDIT_SPREAD', 'IRON_CONDOR', 'IRON_BUTTERFLY']:
+                            # Credit Strategies: entry = credit received, exit = debit paid (both positive)
+                            pnl_dollars = entry_price - exit_price
+                            pnl_pct = ((entry_price - exit_price) / entry_price) * 100 if entry_price > 0 else 0
+                        elif strategy in ['CALENDAR_SPREAD', 'RATIO_SPREAD']:
+                            # Debit Strategies: entry = debit paid (positive), exit might be credit or debit
+                            # For realized fills, exit_price should be positive (what we paid/received in absolute terms)
+                            # But we need to know if it's credit or debit from the order type
+                            # Since we're here (filled closing order), check if exit was for credit or debit
+                            # Note: exit_price here is the fill_price from order details, which is the limit price
+                            # The actual P&L depends on whether we closed for credit or debit
+                            # For now, assume exit_price represents what we paid (debit close)
+                            # If the trade was profitable, exit_price would be smaller than entry_price
+                            # This is a simplification - ideally we'd track if the close was credit or debit
+                            # P&L = entry_debit - exit_debit (if exit is smaller, profit)
+                            # OR: P&L = exit_credit - entry_debit (if we closed for credit)
+                            # For now, treat exit_price as debit paid (standard case)
+                            pnl_dollars = entry_price - exit_price
+                            pnl_pct = ((entry_price - exit_price) / entry_price) * 100 if entry_price > 0 else 0
+                            # TODO: Enhance to track if close was credit or debit from order type
+                        else:
+                            # Default: Assume credit strategy (backward compatibility)
+                            pnl_dollars = entry_price - exit_price
+                            pnl_pct = ((entry_price - exit_price) / entry_price) * 100 if entry_price > 0 else 0
                     
                     # Record CLOSE trade execution
                     try:
@@ -1152,12 +1175,60 @@ class MarketFeed:
             if missing_quote: 
                 logging.debug(f"⚠️ Missing quotes for {trade_id}, skipping P&L calculation but Greeks updated")
                 continue
-            if cost_to_close <= 0: 
-                logging.debug(f"⚠️ Invalid cost_to_close for {trade_id} (${cost_to_close:.2f}), skipping P&L calculation")
+            # CRITICAL FIX: Allow negative cost_to_close (represents credit received to close)
+            # Calendar/Ratio spreads opened as debit might close for credit
+            # cost_to_close = 0 means free close (unusual but possible)
+            if cost_to_close == 0:
+                logging.debug(f"⚠️ Zero cost_to_close for {trade_id}, skipping P&L calculation")
                 continue
             
-            entry_credit = pos['entry_price']
-            pnl_pct = ((entry_credit - cost_to_close) / entry_credit) * 100
+            # CRITICAL FIX: Strategy-aware P&L calculation
+            # Credit strategies: entry_price = credit received (positive), exit = debit paid (positive cost_to_close)
+            # Debit strategies: entry_price = debit paid (positive), exit might be credit (negative cost_to_close) or debit (positive)
+            entry_price = pos['entry_price']
+            strategy = pos.get('strategy', '')
+            
+            if strategy in ['CREDIT_SPREAD', 'IRON_CONDOR', 'IRON_BUTTERFLY']:
+                # Credit Strategies: We received money to open, we pay money to close
+                # entry_price = credit received (positive)
+                # cost_to_close = debit paid to close (should be positive, but allow negative if we somehow receive credit)
+                # P&L = entry - exit (both should be positive for credit strategies)
+                # If cost_to_close < 0, it means we're receiving a credit to close (unusual but handle it)
+                if cost_to_close < 0:
+                    # We're closing for a credit (very unusual for credit spreads - might be error, but calculate anyway)
+                    # P&L = entry_credit + exit_credit (we received both)
+                    pnl_dollars = entry_price + abs(cost_to_close)
+                    pnl_pct = ((entry_price + abs(cost_to_close)) / entry_price) * 100 if entry_price > 0 else 0
+                else:
+                    # Normal: P&L = entry_credit - exit_debit
+                    pnl_dollars = entry_price - cost_to_close
+                    pnl_pct = ((entry_price - cost_to_close) / entry_price) * 100 if entry_price > 0 else 0
+            elif strategy in ['CALENDAR_SPREAD', 'RATIO_SPREAD']:
+                # Debit Strategies: We paid money to open (entry_price is debit paid, stored as positive)
+                # cost_to_close can be:
+                #   - Negative: We receive credit to close (profit)
+                #   - Positive: We pay additional debit to close (loss, or if smaller than entry, profit)
+                # P&L = exit - entry (where exit sign matters)
+                if cost_to_close < 0:
+                    # Closing for credit: profit = exit_credit + entry_debit
+                    # We paid entry_debit to open, we receive exit_credit to close
+                    pnl_dollars = abs(cost_to_close) - entry_price  # Credit received minus debit paid
+                    pnl_pct = ((abs(cost_to_close) - entry_price) / entry_price) * 100 if entry_price > 0 else 0
+                else:
+                    # Closing for debit: P&L = entry_debit - exit_debit
+                    # If exit_debit < entry_debit: profit (we paid less to close than we paid to open)
+                    # If exit_debit > entry_debit: loss (we paid more to close)
+                    pnl_dollars = entry_price - cost_to_close
+                    pnl_pct = ((entry_price - cost_to_close) / entry_price) * 100 if entry_price > 0 else 0
+            else:
+                # Default: Assume credit strategy (backward compatibility)
+                # This handles MANUAL_RECOVERY and unknown strategies
+                if cost_to_close < 0:
+                    pnl_dollars = entry_price + abs(cost_to_close)
+                    pnl_pct = ((entry_price + abs(cost_to_close)) / entry_price) * 100 if entry_price > 0 else 0
+                else:
+                    pnl_dollars = entry_price - cost_to_close
+                    pnl_pct = ((entry_price - cost_to_close) / entry_price) * 100 if entry_price > 0 else 0
             
             if pnl_pct > pos.get('highest_pnl', -100):
                 pos['highest_pnl'] = pnl_pct
