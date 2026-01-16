@@ -2333,89 +2333,51 @@ class MarketFeed:
         current_minute = now.minute
         
         # -----------------------------------------------
-        # STRATEGY 1: ORB (Opening Range Breakout)
-        # PERMISSION: All Regimes EXCEPT Event Risk
+        # STRATEGY 1: VOLATILITY BEAST (Replaces ORB/Scalper)
+        # PERMISSION: LOW VOLATILITY + TIGHT OPENING RANGE
         # -----------------------------------------------
-        is_orb_window = (current_hour == 10) or (current_hour == 11 and current_minute < 30)
+        # Logic: If VIX is dead (<15) and market is coiling, buy Volatility (Calendar Spreads)
+        is_morning = (current_hour == 10)
         
-        if current_regime.value != 'EVENT_RISK' and is_orb_window and indicators.get('candle_count', 0) >= 30:
+        if not signal and is_morning and indicators.get('vix', 20) < 15:
             orb = self.alpha_engine.get_opening_range(symbol)
-            if orb['complete']:
-                price = indicators['price']
-                velocity = indicators['volume_velocity']
-                
-                if price > orb['high'] and velocity > 1.5:
-                    signal = 'ORB_BREAKOUT_BULL'
-                    strategy = 'CREDIT_SPREAD'
-                    side = 'OPEN'
-                    option_type = 'PUT'
-                    bias = 'bullish'
-                elif price < orb['low'] and velocity > 1.5:
-                    signal = 'ORB_BREAKOUT_BEAR'
-                    strategy = 'CREDIT_SPREAD'
-                    side = 'OPEN'
-                    option_type = 'CALL'
-                    bias = 'bearish'
+            if orb['complete'] and orb['low'] > 0:
+                # Check for tight range (< 0.5%)
+                range_pct = (orb['high'] - orb['low']) / orb['low']
+                if range_pct < 0.005:
+                    logging.info(f"🦁 BEAST: {symbol} Coiling (Range {range_pct*100:.2f}%) + Low VIX. Buying Calendar.")
+                    legs = await self._find_calendar_legs(symbol, indicators['price'])
+                    if legs:
+                        # Calendar is a DEBIT trade. Limit price = Net Debit.
+                        await self._send_complex_proposal(symbol, 'CALENDAR_SPREAD', 'OPEN', legs, indicators, 'neutral')
+                        self.last_proposal_time[symbol] = now
+                        return
 
         # -----------------------------------------------
-        # STRATEGY 2: RANGE FARMER (Iron Condor)
-        # PERMISSION: ONLY in LOW_VOL_CHOP
+        # STRATEGY 2: RANGE FARMER (Upgraded)
+        # PERMISSION: CHOP + STRICT ADX FILTER
         # -----------------------------------------------
-        if not signal and current_regime.value == 'LOW_VOL_CHOP' and current_hour == 13 and 0 <= current_minute < 5:
+        if not signal and current_regime.value == 'LOW_VOL_CHOP' and current_hour == 13:
+            # STRICT FILTER: ADX must be < 20. If > 20, it's a "Grinding Trend", do not farm.
             adx = self.alpha_engine.get_adx(symbol)
-            if adx is not None and adx < 20:  # Low Trend
-                # Volume Profile Filter: Only enter if price is near POC (within $2 for SPY/QQQ)
-                # In chop, price acts like a rubber band around POC. If too far, avoid.
+            if adx is not None and adx < 20:
+                iv_rank = self.alpha_engine.get_iv_rank(symbol)
                 poc = indicators.get('poc', 0)
                 current_price = indicators['price']
                 
+                # Must be near POC
                 if poc > 0 and abs(current_price - poc) < 2.00:
-                    logging.info(f"🚜 FARMING: {symbol} ADX {adx:.1f}. Price ${current_price:.2f} near POC ${poc:.2f}. Opening Iron Condor.")
-                    # FIX: Use 'CREDIT_SPREAD' so Gatekeeper accepts the order
-                    # Leg 1: Bear Call Spread
-                    await self._send_proposal(symbol, 'CREDIT_SPREAD', 'OPEN', 'CALL', indicators, 'neutral')
-                    # Leg 2: Bull Put Spread
-                    await self._send_proposal(symbol, 'CREDIT_SPREAD', 'OPEN', 'PUT', indicators, 'neutral')
-                    self.last_proposal_time[symbol] = now
-                    return
-                elif poc > 0:
-                    logging.debug(f"🔍 Vol Profile: Price ${current_price:.2f} vs POC ${poc:.2f} (Distance: ${abs(current_price - poc):.2f}) - Too far from value node, skipping Iron Condor")
-
-        # -----------------------------------------------
-        # STRATEGY 3: SCALPER (0DTE)
-        # PERMISSION: TRENDING or HIGH_VOL_EXPANSION
-        # -----------------------------------------------
-        if not signal and current_regime.value in ['TRENDING', 'HIGH_VOL_EXPANSION']:
-            rsi_2 = self.alpha_engine.get_rsi(symbol, period=2)
-            if rsi_2 is not None and (rsi_2 < 5 or rsi_2 > 95):
-                zero_dte = await self._get_0dte_expiration(symbol)
-                if zero_dte:
-                    if rsi_2 < 5:
-                        signal = 'SCALP_BULL_PUT'
-                        strategy = 'CREDIT_SPREAD'
-                        side = 'OPEN'
-                        option_type = 'PUT'
-                        bias = 'bullish'
-                    else:
-                        signal = 'SCALP_BEAR_CALL'
-                        strategy = 'CREDIT_SPREAD'
-                        side = 'OPEN'
-                        option_type = 'CALL'
-                        bias = 'bearish'
-                        
-                    if signal:
-                        # ADDITIONAL FILTER (From Feedback Audit):
-                        # Don't short a strong uptrend
-                        trend_strength = self.alpha_engine.get_adx(symbol)
-                        if signal == 'SCALP_BEAR_CALL' and trend_strength is not None and trend_strength > 40:
-                            logging.info(f"🚫 SKIPPING SCALP: Trend too strong (ADX {trend_strength:.1f})")
-                            signal = None
-                            return
-                        
-                        logging.info(f"⚡ SCALP: {symbol} RSI(2) {rsi_2:.1f}. 0DTE {option_type}.")
-                        await self._send_proposal(symbol, strategy, side, option_type, indicators, bias, force_expiration=zero_dte)
-                        self.last_signals[symbol] = {'signal': signal, 'timestamp': now}
-                        return
+                    logging.info(f"🚜 FARMING: {symbol} True Chop (ADX {adx:.1f}). Selling Iron Condor.")
+                    # Use Iron Butterfly logic (can reuse Iron Condor if preferred)
+                    exp = await self._get_best_expiration(symbol)
+                    if exp:
+                        chain = await self._get_option_chain(symbol, exp)
+                        if chain:
+                            legs = await self._find_iron_butterfly_legs(chain, current_price, exp)
+                            if legs:
+                                await self._send_complex_proposal(symbol, 'IRON_BUTTERFLY', 'OPEN', legs, indicators, 'neutral')
+                                self.last_proposal_time[symbol] = now
+                                return
 
         # --- UTILITY 1: EARNINGS ASSASSIN ---
         # Trigger: 3:55 PM on Earnings Day
@@ -2447,8 +2409,8 @@ class MarketFeed:
                 return
 
         # -----------------------------------------------
-        # STRATEGY 4: TREND ENGINE (Enhanced with Market Structure S/R)
-        # PERMISSION: ONLY in TRENDING
+        # STRATEGY 3: TREND ENGINE (The Skew Upgrade)
+        # PERMISSION: TRENDING
         # -----------------------------------------------
         if not signal and current_regime.value == 'TRENDING':
             if not indicators.get('is_warm', False):
@@ -2459,58 +2421,54 @@ class MarketFeed:
             trend = indicators['trend']
             rsi = indicators['rsi']
             flow = indicators['flow_state']
-            
-            # Market Structure (Support/Resistance via Volume)
             poc = indicators.get('poc', 0)
-            vah = indicators.get('vah', 0)  # Value Area High (Dynamic Resistance)
-            val = indicators.get('val', 0)  # Value Area Low (Dynamic Support)
+            vah = indicators.get('vah', 0)
+            val = indicators.get('val', 0)
             current_price = indicators['price']
+            vix = indicators.get('vix', 20)
             
-            if poc == 0: return # Wait for volume profile build
+            if poc == 0:
+                return
+
+            # CHECK FOR SKEW OPPORTUNITY (Low VIX Trend)
+            # If VIX < 13, Credit Spreads pay nothing. Switch to Ratio Backspreads.
+            use_skew_trade = vix < 13
 
             # --- BULLISH LOGIC ---
             if trend == 'UPTREND' and flow != 'NEUTRAL':
-                # Setup 1: The Breakout (Price > Resistance)
-                # If price clears VAH, resistance becomes support. Strongest bullish signal.
-                if current_price > vah and rsi < 60: # Relaxed RSI for breakouts
-                    signal = 'BULL_PUT_SPREAD'
-                    strategy = 'CREDIT_SPREAD'
-                    side = 'OPEN'
-                    option_type = 'PUT'
-                    bias = 'bullish'
-                    logging.info(f"🚀 S/R BREAKOUT: {symbol} Price ${current_price:.2f} cleared VAH ${vah:.2f}. Market Structure Shift.")
-
-                # Setup 2: The Value Pullback (Price Retests Value)
-                # Price dips into Value Area but holds above POC. Classic trend continuation.
-                elif current_price > poc and current_price < vah and rsi < 30:
-                    signal = 'BULL_PUT_SPREAD'
-                    strategy = 'CREDIT_SPREAD'
-                    side = 'OPEN'
-                    option_type = 'PUT'
-                    bias = 'bullish'
-                    logging.info(f"🛡️ S/R SUPPORT: {symbol} Price ${current_price:.2f} finding support at Value Area (POC ${poc:.2f}).")
+                # Breakout or Support Retest
+                valid_setup = (current_price > vah and rsi < 60) or (current_price > poc and current_price < vah and rsi < 30)
+                
+                if valid_setup:
+                    if use_skew_trade:
+                        # RATIO BACKSPREAD: Sell 1 ATM Put, Buy 2 OTM Puts
+                        # "The Crash Hedge that pays if we go up"
+                        logging.info(f"🛡️ SKEW: {symbol} Trend UP but VIX Low ({vix:.1f}). Deploying Ratio Backspread.")
+                        exp = await self._get_best_expiration(symbol)
+                        if exp:
+                            chain = await self._get_option_chain(symbol, exp)
+                            if chain:
+                                legs = await self._find_ratio_spread_legs(chain, current_price, exp)
+                                if legs:
+                                    await self._send_complex_proposal(symbol, 'RATIO_SPREAD', 'OPEN', legs, indicators, 'bullish')
+                                    self.last_proposal_time[symbol] = now
+                                    return
+                    else:
+                        # STANDARD CREDIT SPREAD (Yield Harvesting)
+                        signal = 'BULL_PUT_SPREAD'
+                        strategy = 'CREDIT_SPREAD'
+                        side = 'OPEN'
+                        option_type = 'PUT'
+                        bias = 'bullish'
 
             # --- BEARISH LOGIC ---
             elif trend == 'DOWNTREND' and flow != 'NEUTRAL':
-                # Setup 1: The Breakdown (Price < Support)
-                # If price falls below VAL, support becomes resistance. Strongest bearish signal.
-                if current_price < val and rsi > 40: # Relaxed RSI for breakdowns
+                if (current_price < val and rsi > 40) or (current_price < poc and current_price > val and rsi > 70):
                     signal = 'BEAR_CALL_SPREAD'
                     strategy = 'CREDIT_SPREAD'
                     side = 'OPEN'
                     option_type = 'CALL'
                     bias = 'bearish'
-                    logging.info(f"📉 S/R BREAKDOWN: {symbol} Price ${current_price:.2f} lost VAL ${val:.2f}. Market Structure Shift.")
-
-                # Setup 2: The Value Rally (Price Retests Resistance)
-                # Price rallies into Value Area but fails at POC.
-                elif current_price < poc and current_price > val and rsi > 70:
-                    signal = 'BEAR_CALL_SPREAD'
-                    strategy = 'CREDIT_SPREAD'
-                    side = 'OPEN'
-                    option_type = 'CALL'
-                    bias = 'bearish'
-                    logging.info(f"🧱 S/R RESISTANCE: {symbol} Price ${current_price:.2f} rejecting at Value Area (POC ${poc:.2f}).")
 
         # Get IV Rank for complex strategies
         iv_rank = self.alpha_engine.get_iv_rank(symbol)
@@ -2814,6 +2772,76 @@ class MarketFeed:
             'side': 'BUY'
         })
         return legs
+
+    async def _find_calendar_legs(self, symbol: str, price: float) -> List[Dict]:
+        """
+        Construct Calendar Spread: Sell Near-Term ATM, Buy Far-Term ATM
+        Target: Long Vega (Volatility) trade.
+        Returns: [Short Leg (Front Month), Long Leg (Back Month)]
+        """
+        # 1. Get Expirations
+        exps = await self._get_expirations(symbol)
+        if len(exps) < 2:
+            return []
+        
+        today = datetime.now().date()
+        
+        # Find Front Month (~30 DTE) and Back Month (~60 DTE)
+        front_exp = None
+        back_exp = None
+        
+        for e in exps:
+            try:
+                dte = (datetime.strptime(e, '%Y-%m-%d').date() - today).days
+                if not front_exp and 20 <= dte <= 35:
+                    front_exp = e
+                if not back_exp and 50 <= dte <= 70:
+                    back_exp = e
+            except:
+                continue
+            
+        if not front_exp or not back_exp:
+            return []
+        
+        # 2. Get Chains
+        front_chain = await self._get_option_chain(symbol, front_exp)
+        back_chain = await self._get_option_chain(symbol, back_exp)
+        
+        if not front_chain or not back_chain:
+            return []
+        
+        # 3. Find ATM Strike (Put side usually has flatter skew)
+        # Use front chain to determine ATM
+        strikes = sorted(list(set(float(x.get('strike', 0)) for x in front_chain if x.get('strike'))))
+        if not strikes:
+            return []
+        
+        atm_strike = min(strikes, key=lambda x: abs(x - price))
+        
+        # 4. Helper to make a leg
+        def _make_leg(chain, exp, strike, opt_type, side, qty):
+            for opt in chain:
+                if (float(opt.get('strike', 0)) == strike and 
+                    opt.get('option_type', '').upper() == opt_type.upper()):
+                    return {
+                        'symbol': opt['symbol'],
+                        'expiration': exp,
+                        'strike': strike,
+                        'type': opt_type,
+                        'quantity': qty,
+                        'side': side
+                    }
+            return None
+        
+        # 5. Build Legs
+        # Leg 1: Sell Front Month ATM Put
+        short_leg = _make_leg(front_chain, front_exp, atm_strike, 'PUT', 'SELL', 1)
+        # Leg 2: Buy Back Month ATM Put
+        long_leg = _make_leg(back_chain, back_exp, atm_strike, 'PUT', 'BUY', 1)
+        
+        if short_leg and long_leg:
+            return [short_leg, long_leg]
+        return []
 
     async def _send_proposal(self, symbol, strategy, side, option_type, indicators, bias, force_expiration=None):
         """Constructs proposal using REAL Delta Selection and REAL Pricing"""

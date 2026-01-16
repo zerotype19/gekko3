@@ -25,7 +25,7 @@ export interface TradeProposal {
 
   // Trade details
   symbol: string; // Underlying symbol (e.g., "SPY")
-  strategy: 'CREDIT_SPREAD' | 'IRON_CONDOR' | 'IRON_BUTTERFLY' | 'RATIO_SPREAD';
+  strategy: 'CREDIT_SPREAD' | 'IRON_CONDOR' | 'IRON_BUTTERFLY' | 'RATIO_SPREAD' | 'CALENDAR_SPREAD';
   
   // OPEN = Enter Position, CLOSE = Exit Position
   side: 'OPEN' | 'CLOSE';

@@ -415,6 +415,24 @@ export class GatekeeperDO {
             };
           }
           break;
+
+        case 'CALENDAR_SPREAD':
+          if (legCount !== 2) {
+            return {
+              status: 'REJECTED',
+              rejectionReason: `CALENDAR_SPREAD must have exactly 2 legs (got ${legCount})`,
+              evaluatedAt,
+            };
+          }
+          // Calendar Spread: Legs must have different expirations
+          if (proposal.legs[0].expiration === proposal.legs[1].expiration) {
+            return {
+              status: 'REJECTED',
+              rejectionReason: `CALENDAR_SPREAD legs must have different expirations`,
+              evaluatedAt,
+            };
+          }
+          break;
           
         default:
           // Should be caught by allowedStrategies check, but safety first

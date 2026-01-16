@@ -705,11 +705,28 @@ class AlphaEngine:
         volume_histogram = np.zeros(num_buckets)
         
         # Distribute volume from each candle across its price range
+        # Ensure required columns exist
+        required_cols = ['low', 'high', 'volume']
+        if not all(col in df.columns for col in required_cols):
+            return {
+                'poc': 0.0,
+                'vah': 0.0,
+                'val': 0.0,
+                'total_volume': 0
+            }
+        
         total_volume = 0
         for _, row in df.iterrows():
-            candle_low = float(row['low'])
-            candle_high = float(row['high'])
-            candle_volume = float(row['volume'])
+            try:
+                candle_low = float(row['low'])
+                candle_high = float(row['high'])
+                candle_volume = float(row['volume'])
+            except (KeyError, ValueError, TypeError):
+                # Skip rows with missing or invalid data
+                continue
+            
+            if pd.isna(candle_low) or pd.isna(candle_high) or pd.isna(candle_volume):
+                continue
             
             if candle_volume <= 0 or candle_high <= candle_low:
                 continue

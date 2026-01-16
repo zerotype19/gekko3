@@ -15,7 +15,8 @@ export const CONSTITUTION: RiskConfig = {
     'CREDIT_SPREAD', 
     'IRON_CONDOR', 
     'IRON_BUTTERFLY', 
-    'RATIO_SPREAD'
+    'RATIO_SPREAD',
+    'CALENDAR_SPREAD'
   ] as const,
 
     // Risk Limits (INCREASED FOR TESTING)
