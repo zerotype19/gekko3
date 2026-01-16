@@ -2741,8 +2741,8 @@ class MarketFeed:
                 
                 # Must be near POC
                 if poc > 0 and abs(current_price - poc) < 2.00:
-                    logging.info(f"🚜 FARMING: {symbol} True Chop (ADX {adx:.1f}). Selling Iron Condor.")
-                    # Use Iron Butterfly logic (can reuse Iron Condor if preferred)
+                    logging.info(f"🚜 FARMING: {symbol} True Chop (ADX {adx:.1f}). Selling Iron Butterfly.")
+                    # Iron Butterfly: Sell ATM Call/Put (same strike), Buy OTM Wings
                     exp = await self._get_best_expiration(symbol)
                     if exp:
                         chain = await self._get_option_chain(symbol, exp)
@@ -3093,6 +3093,14 @@ class MarketFeed:
         # Verify we found all 4
         if len(legs) != 4:
             return []
+        
+        # Log structure for QA verification
+        logging.info(f"🦋 IRON BUTTERFLY STRUCTURE: Center={atm_strike}, Width={width}")
+        logging.info(f"   Leg 1: {legs[0]['side']} {legs[0]['quantity']} {legs[0]['type']} @ ${legs[0]['strike']:.0f}")
+        logging.info(f"   Leg 2: {legs[1]['side']} {legs[1]['quantity']} {legs[1]['type']} @ ${legs[1]['strike']:.0f}")
+        logging.info(f"   Leg 3: {legs[2]['side']} {legs[2]['quantity']} {legs[2]['type']} @ ${legs[2]['strike']:.0f}")
+        logging.info(f"   Leg 4: {legs[3]['side']} {legs[3]['quantity']} {legs[3]['type']} @ ${legs[3]['strike']:.0f}")
+        
         return legs
 
     async def _find_ratio_spread_legs(self, chain: List[Dict], price: float, expiration: str) -> List[Dict]:
