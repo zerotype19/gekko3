@@ -132,6 +132,70 @@ with sys_col4:
 
 st.markdown("---")
 
+# --- SECTION: REGIME PIVOT ENGINE (VIX/ADX Metrics) ---
+st.markdown("### 🧭 Regime Pivot Engine")
+
+# Get VIX and ADX from market data (use SPY as proxy for market-wide metrics)
+spy_data = market_data.get('SPY', {})
+vix = spy_data.get('vix', system_data.get('vix', 0))
+adx = spy_data.get('adx', 0)  # ADX might be per-symbol, use SPY as market proxy
+
+# Calculate ADX from market data if available
+if not adx and 'SPY' in market_data:
+    # Try to get ADX from indicators if available
+    indicators = market_data['SPY'].get('indicators', {})
+    adx = indicators.get('adx', 0)
+
+# Determine Active Strategy Mode based on Regime + VIX + ADX
+strategy_mode = "WAITING"
+strategy_emoji = "⏳"
+
+if regime == 'LOW_VOL_CHOP':
+    if adx and adx < 20:
+        strategy_mode = "🚜 FARMER (Iron Condor)"
+        strategy_emoji = "🚜"
+    else:
+        strategy_mode = "⚠️ CHOP (Trend Grinding - No Trade)"
+        strategy_emoji = "⚠️"
+elif regime == 'TRENDING':
+    if vix and vix < 13:
+        strategy_mode = "🛡️ SKEW (Ratio Backspread)"
+        strategy_emoji = "🛡️"
+    else:
+        strategy_mode = "📈 TREND (Credit Spread)"
+        strategy_emoji = "📈"
+elif regime == 'HIGH_VOL_EXPANSION':
+    strategy_mode = "🔴 EXPANSION (Stand Down)"
+    strategy_emoji = "🔴"
+elif regime == 'EVENT_RISK':
+    strategy_mode = "🚨 EVENT (Blocked)"
+    strategy_emoji = "🚨"
+
+# Check for VOLATILITY BEAST window (low VIX + morning hours)
+now_hour = datetime.now().hour
+if vix and vix < 15 and 9 <= now_hour <= 10:
+    strategy_mode = "🦁 BEAST (Calendar Scan)"
+    strategy_emoji = "🦁"
+
+# Display metrics in columns
+pivot_col1, pivot_col2, pivot_col3, pivot_col4 = st.columns(4)
+
+with pivot_col1:
+    vix_delta = "-Low Vol" if vix and vix < 15 else "Normal" if vix else None
+    st.metric("VIX Level", f"{vix:.2f}" if vix else "N/A", delta=vix_delta)
+
+with pivot_col2:
+    adx_delta = "Strong" if adx and adx > 25 else "Weak" if adx else None
+    st.metric("Trend Strength (ADX)", f"{adx:.1f}" if adx else "N/A", delta=adx_delta)
+
+with pivot_col3:
+    st.metric("Market Regime", regime)
+
+with pivot_col4:
+    st.metric("Active Strategy Mode", strategy_mode)
+
+st.markdown("---")
+
 # --- POSITIONS TABLE ---
 positions_list = system_data.get('positions', [])
 if positions_list:
