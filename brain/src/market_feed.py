@@ -693,40 +693,91 @@ class MarketFeed:
                 elif order_status in ['pending', 'open', 'partially_filled']:
                     # Check timeout (2 minutes - faster retry for opening orders)
                     sent_time = pos.get('opening_timestamp')
-                    if sent_time and (now - sent_time).total_seconds() > 120:  # 2 minutes
-                        symbol = pos.get('symbol')
-                        strategy = pos.get('strategy')
-                        logging.info(f"⏳ Entry Order {order_id} pending > 2m. Re-evaluating signal for {symbol} {strategy}...")
+                    if sent_time:
+                        # Handle string datetime (from JSON)
+                        if isinstance(sent_time, str):
+                            try:
+                                sent_time = datetime.fromisoformat(sent_time)
+                            except (ValueError, TypeError):
+                                logging.warning(f"⚠️ Invalid opening_timestamp for {trade_id}: {sent_time}. Clearing.")
+                                del pos['opening_timestamp']
+                                sent_time = None
                         
-                        # Cancel the old order first
-                        await self._cancel_order(order_id)
-                        
-                        # Re-check if conditions still favor this trade
-                        # Get current indicators to re-evaluate
-                        indicators = self.alpha_engine.get_indicators(symbol)
-                        current_regime = self.regime_engine.get_regime(symbol)
-                        
-                        # Re-check signal conditions (simplified check - just verify regime/strategy match)
-                        should_retry = False
-                        if current_regime.value == 'TRENDING' and strategy in ['BULL_PUT_SPREAD', 'BEAR_CALL_SPREAD']:
-                            should_retry = True
-                        elif current_regime.value == 'LOW_VOL_CHOP' and strategy in ['IRON_CONDOR', 'IRON_BUTTERFLY']:
-                            should_retry = True
-                        elif current_regime.value == 'HIGH_VOL' and strategy == 'RATIO_SPREAD':
-                            should_retry = True
-                        
-                        if should_retry:
-                            logging.info(f"🔄 Signal still valid for {symbol} {strategy}. Retrying with fresh pricing...")
-                            # Delete the old position and let signal checker naturally retry
-                            # (The signal checker will see conditions still favor, and re-send proposal)
-                            del self.open_positions[trade_id]
-                            self._save_positions_to_disk()
-                            # Note: We don't immediately retry here - let the natural signal cycle handle it
-                            # This avoids duplicate proposals and respects min_proposal_interval
-                        else:
-                            logging.info(f"🚫 Signal conditions changed for {symbol} {strategy}. Cancelling and removing.")
-                            del self.open_positions[trade_id]
-                            self._save_positions_to_disk()
+                        if sent_time and isinstance(sent_time, datetime):
+                            elapsed_seconds = (now - sent_time).total_seconds()
+                            if elapsed_seconds > 120:  # 2 minutes
+                                symbol = pos.get('symbol')
+                                strategy = pos.get('strategy')
+                                logging.info(f"⏳ Entry Order {order_id} pending > 2m ({elapsed_seconds:.0f}s). Re-evaluating signal for {symbol} {strategy}...")
+                                
+                                # CRITICAL: Try to cancel the old order, but verify status after cancellation attempt
+                                cancel_success = await self._cancel_order(order_id)
+                                
+                                # After cancellation attempt, re-check order status
+                                # This is critical because cancellation might fail but order could be filled
+                                await asyncio.sleep(2)  # Give Tradier time to process cancellation
+                                final_status = await self._get_order_status(order_id)
+                                
+                                # If order was filled during cancellation attempt, handle it
+                                if final_status == 'filled':
+                                    logging.info(f"✅ Order {order_id} FILLED during cancellation attempt. Position {trade_id} opened successfully.")
+                                    # Update position status to OPEN and mark as filled
+                                    pos['status'] = 'OPEN'
+                                    pos['entry_order_id'] = order_id
+                                    # Get fill price from order details
+                                    order_details = await self._get_order_details(order_id)
+                                    if order_details:
+                                        avg_fill = order_details.get('avg_fill_price')
+                                        if avg_fill:
+                                            pos['entry_price'] = float(avg_fill)
+                                    self._save_positions_to_disk()
+                                    continue  # Skip remaining logic, position is now OPEN
+                                
+                                # If order is cancelled/rejected/expired, proceed with retry logic
+                                elif final_status in ['canceled', 'rejected', 'expired']:
+                                    logging.info(f"✅ Order {order_id} {final_status}. Proceeding with retry logic...")
+                                    # Continue to retry logic below
+                                
+                                # If order is still pending and cancellation failed, mark as "stuck"
+                                elif final_status in ['pending', 'open'] and not cancel_success:
+                                    # Order cannot be cancelled (likely "order not available to be canceled")
+                                    # This means order might be in a state where it can't be cancelled but isn't filled
+                                    # Mark as "stuck" and continue monitoring - don't delete position
+                                    logging.warning(f"⚠️ Order {order_id} cannot be cancelled and is still pending. Marking as 'stuck' and continuing to monitor.")
+                                    pos['stuck'] = True
+                                    pos['stuck_since'] = now.isoformat()
+                                    self._save_positions_to_disk()
+                                    continue  # Skip retry logic, just monitor the stuck order
+                                
+                                # If we get here, cancellation succeeded or order is in terminal state
+                                # Proceed with retry logic
+                                
+                                # Re-check if conditions still favor this trade
+                                # Get current indicators to re-evaluate
+                                indicators = self.alpha_engine.get_indicators(symbol)
+                                current_regime = self.regime_engine.get_regime(symbol)
+                                
+                                # Re-check signal conditions (simplified check - just verify regime/strategy match)
+                                should_retry = False
+                                if current_regime.value == 'TRENDING' and strategy in ['BULL_PUT_SPREAD', 'BEAR_CALL_SPREAD']:
+                                    should_retry = True
+                                elif current_regime.value == 'LOW_VOL_CHOP' and strategy in ['IRON_CONDOR', 'IRON_BUTTERFLY']:
+                                    should_retry = True
+                                elif current_regime.value == 'HIGH_VOL' and strategy == 'RATIO_SPREAD':
+                                    should_retry = True
+                                
+                                if should_retry:
+                                    logging.info(f"🔄 Signal still valid for {symbol} {strategy}. Retrying with fresh pricing...")
+                                    # Delete the old position and let signal checker naturally retry
+                                    # (The signal checker will see conditions still favor, and re-send proposal)
+                                    del self.open_positions[trade_id]
+                                    self._save_positions_to_disk()
+                                    # Note: We don't immediately retry here - let the natural signal cycle handle it
+                                    # This avoids duplicate proposals and respects min_proposal_interval
+                                else:
+                                    logging.info(f"🚫 Signal conditions changed for {symbol} {strategy}. Removing from tracker.")
+                                    del self.open_positions[trade_id]
+                                    self._save_positions_to_disk()
                     else:
                         # Still within timeout window, just wait
                         elapsed = (now - sent_time).total_seconds() if sent_time else 0
