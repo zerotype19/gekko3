@@ -2708,18 +2708,21 @@ class MarketFeed:
         
         # -----------------------------------------------
         # STRATEGY 1: VOLATILITY BEAST (Replaces ORB/Scalper)
-        # PERMISSION: LOW VOLATILITY + TIGHT OPENING RANGE
+        # PERMISSION: COMPRESSED Regime (VIX < 13.5, ADX < 20)
         # -----------------------------------------------
-        # Logic: If VIX is dead (<15) and market is coiling, buy Volatility (Calendar Spreads)
+        # Logic: Market is compressed (very low VIX + low trend) → Buy Volatility (Calendar Spreads)
+        # This regime specifically identifies the "coil" before expansion
+        # Selling Iron Condors here is dangerous (gamma explosion risk)
         is_morning = (current_hour == 10)
         
-        if not signal and is_morning and indicators.get('vix', 20) < 15:
+        if not signal and is_morning and current_regime.value == 'COMPRESSED':
             orb = self.alpha_engine.get_opening_range(symbol)
             if orb['complete'] and orb['low'] > 0:
-                # Check for tight range (< 0.5%)
+                # Additional filter: Tight Opening Range (< 0.5%) confirms compression
                 range_pct = (orb['high'] - orb['low']) / orb['low']
                 if range_pct < 0.005:
-                    logging.info(f"🦁 BEAST: {symbol} Coiling (Range {range_pct*100:.2f}%) + Low VIX. Buying Calendar.")
+                    vix = indicators.get('vix', 20)
+                    logging.info(f"🦁 BEAST: {symbol} Compressed (VIX {vix:.1f}, Range {range_pct*100:.2f}%). Buying Volatility (Calendar).")
                     legs = await self._find_calendar_legs(symbol, indicators['price'])
                     if legs:
                         # Calendar is a DEBIT trade. Limit price = Net Debit.
