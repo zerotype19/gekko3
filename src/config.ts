@@ -26,7 +26,7 @@ export const CONSTITUTION: RiskConfig = {
 
   // DTE Limits (NEW)
   minDte: 0,    // Allows Scalper (0DTE)
-  maxDte: 60,   // Allows Trend/Farmer (30-45 DTE)
+  maxDte: 90,   // Allows Calendar Spreads (back-month ~70 DTE) and Trend/Farmer (30-45 DTE)
 
   // Correlation Groups (Phase C)
   // Assets in the same group share a risk bucket
