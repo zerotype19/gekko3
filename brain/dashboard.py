@@ -1,7 +1,7 @@
 """
 Gekko3 Mission Control (Pro)
 Live visualization of trading system state using Streamlit
-Compatible with Phase C Rich State Export
+Compatible with Phase C Rich State Export + Pilot Stats
 """
 
 import streamlit as st
@@ -11,446 +11,301 @@ import time
 import os
 from datetime import datetime, timedelta
 import plotly.graph_objects as go
+import plotly.express as px
 
-# Page configuration
+# --- CONFIGURATION ---
 st.set_page_config(
-    page_title="Gekko3 Pro Terminal",
-    page_icon="🧠",
+    page_title="Gekko3 Command",
+    page_icon="🦁",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed" # Focus on the data
 )
 
-# Custom CSS
+# --- STYLING ---
 st.markdown("""
     <style>
-    .main-header { font-size: 2.5rem; font-weight: bold; color: #1f77b4; text-align: center; margin-bottom: 1rem; }
-    .sub-header { font-size: 1.2rem; font-weight: bold; opacity: 0.8; margin-top: 1rem; }
-    .metric-container { background-color: #1e293b; padding: 15px; border-radius: 10px; color: white; }
-    .regime-tag { padding: 5px 10px; border-radius: 5px; font-weight: bold; color: white; }
-    .stale-warning { color: #ff4b4b; font-weight: bold; border: 1px solid #ff4b4b; padding: 10px; border-radius: 5px; text-align: center; margin-bottom: 10px; }
+    /* Global Cleanups */
+    .block-container { padding-top: 2rem; padding-bottom: 2rem; }
+    
+    /* Metrics */
+    div[data-testid="stMetric"] {
+        background-color: #1e293b;
+        border: 1px solid #334155;
+        padding: 15px;
+        border-radius: 8px;
+        color: white;
+    }
+    div[data-testid="stMetricLabel"] { color: #94a3b8 !important; }
+    div[data-testid="stMetricValue"] { color: #f8fafc !important; font-weight: 700; }
+    
+    /* Regime Badges */
+    .regime-box {
+        padding: 20px;
+        border-radius: 8px;
+        text-align: center;
+        margin-bottom: 20px;
+        border: 1px solid rgba(255,255,255,0.1);
+    }
+    .regime-title { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px; opacity: 0.8; }
+    .regime-value { font-size: 2.5rem; font-weight: 900; margin: 10px 0; }
+    .regime-desc { font-size: 1.1rem; font-style: italic; opacity: 0.9; }
+    
+    /* Tables */
+    .stDataFrame { border: 1px solid #334155; border-radius: 8px; }
+    
+    /* Status Indicators */
+    .status-ok { color: #4ade80; font-weight: bold; }
+    .status-warn { color: #facc15; font-weight: bold; }
+    .status-err { color: #ef4444; font-weight: bold; }
     </style>
 """, unsafe_allow_html=True)
 
-# Title
-st.markdown('<p class="main-header">🧠 Gekko3 Pro Terminal</p>', unsafe_allow_html=True)
-
-# Sidebar
-with st.sidebar:
-    st.header("⚙️ Controls")
-    auto_refresh = st.checkbox("Auto-refresh", value=True)
-    refresh_interval = st.slider("Refresh rate (sec)", 1, 10, 2)
-    if st.button("🔄 Refresh Now"):
-        st.rerun()
-    st.markdown("---")
-    st.markdown("**System Status**")
-    st.info("Monitoring 'brain_state.json'")
-
-# Load State
-state_file = 'brain_state.json'
-if not os.path.exists(state_file):
-    st.warning("⚠️ Waiting for Brain heartbeat...")
-    time.sleep(2)
-    st.rerun()
-
-try:
-    # Read file with retry logic to handle race conditions
-    raw_data = None
-    for attempt in range(3):
+# --- DATA LOADING ---
+@st.cache_data(ttl=1) # Cache for 1 second to prevent file lock contention
+def load_data():
+    state = {}
+    pilot = {}
+    
+    # Load Brain State
+    if os.path.exists('brain_state.json'):
         try:
-            with open(state_file, 'r') as f:
-                content = f.read().strip()
-                if not content:
-                    time.sleep(0.1)
-                    continue
-                raw_data = json.loads(content)
-                break
-        except json.JSONDecodeError as e:
-            if attempt < 2:
-                time.sleep(0.1)
-                continue
-            else:
-                raise
-    
-    if raw_data is None:
-        st.warning("⚠️ State file is empty. Waiting for Brain to write data...")
-        time.sleep(2)
-        st.rerun()
+            with open('brain_state.json', 'r') as f:
+                state = json.load(f)
+        except: pass
         
-except Exception as e:
-    st.error(f"⚠️ Error reading state: {e}")
+    # Load Pilot Stats
+    if os.path.exists('pilot_stats.json'):
+        try:
+            with open('pilot_stats.json', 'r') as f:
+                pilot = json.load(f)
+        except: pass
+        
+    return state, pilot
+
+raw_state, raw_pilot = load_data()
+
+# --- SIDEBAR ---
+with st.sidebar:
+    st.title("⚙️ Controls")
+    auto_refresh = st.toggle("Auto-Refresh (2s)", value=True)
+    if st.button("Manual Refresh"):
+        st.rerun()
+    st.divider()
+    st.caption(f"Last UI Update: {datetime.now().strftime('%H:%M:%S')}")
+    st.caption("Gekko3 Pivot Engine v3.1")
+
+# --- DATA PRE-PROCESSING ---
+if not raw_state:
+    st.warning("⚠️ Waiting for Brain Connection...")
     time.sleep(2)
     st.rerun()
 
-# Handle New "Rich" Structure
-if 'system' in raw_data and 'market' in raw_data:
-    system_data = raw_data['system']
-    market_data = raw_data['market']
-else:
-    st.error("❌ Incompatible Data Format. Please restart brain/main.py.")
-    st.stop()
+system = raw_state.get('system', {})
+market = raw_state.get('market', {})
 
-# --- FRESHNESS CHECK ---
-last_update_str = system_data.get('timestamp')
-try:
-    last_update = datetime.fromisoformat(last_update_str)
-    seconds_ago = (datetime.now() - last_update).total_seconds()
-    if seconds_ago > 60:
-        st.markdown(f'<div class="stale-warning">⚠️ DATA STALE: Last update {int(seconds_ago)}s ago. Is Brain running?</div>', unsafe_allow_html=True)
-except:
-    pass
+# Time freshness check
+last_update = datetime.fromisoformat(system.get('timestamp', datetime.now().isoformat()))
+latency = (datetime.now() - last_update).total_seconds()
+status_color = "#4ade80" if latency < 60 else "#ef4444"
+status_text = "ONLINE" if latency < 60 else "STALE/OFFLINE"
 
-# --- SECTION 1: MISSION CONTROL (System Wide) ---
-st.markdown("### 🛡️ Portfolio & Risk")
+# --- HUD (Heads Up Display) ---
 
-# 1. System Health Row
-sys_col1, sys_col2, sys_col3, sys_col4 = st.columns(4)
+# 1. Regime Banner
+regime = system.get('regime', 'UNKNOWN')
+vix = market.get('SPY', {}).get('vix', 0)
+adx = market.get('SPY', {}).get('adx', 0)
 
-with sys_col1:
-    regime = system_data.get('regime', 'UNKNOWN')
-    regime_color = "gray"
-    if regime == 'LOW_VOL_CHOP': regime_color = "#3b82f6" # Blue
-    elif regime == 'TRENDING': regime_color = "#22c55e"    # Green
-    elif regime == 'HIGH_VOL_EXPANSION': regime_color = "#f97316" # Orange
-    elif regime == 'EVENT_RISK': regime_color = "#ef4444"  # Red
-    
-    st.markdown(f"**Market Regime**")
-    st.markdown(f"<div style='background-color:{regime_color}; text-align:center;' class='regime-tag'>{regime}</div>", unsafe_allow_html=True)
+# Determine Logic/Color
+bg_color = "#1e293b" # Default
+emoji = "❓"
+desc = "Analyzing..."
 
-with sys_col2:
-    risk = system_data.get('portfolio_risk', {})
-    delta = risk.get('delta', 0)
-    st.metric("Net Delta", f"{delta:+.1f}", delta="Bullish" if delta > 0 else "Bearish")
-
-with sys_col3:
-    theta = risk.get('theta', 0)
-    st.metric("Net Theta", f"${theta:+.1f}/day", delta="Income")
-
-with sys_col4:
-    positions = system_data.get('open_positions', 0)
-    total_positions = system_data.get('total_positions', 0)
-    st.metric("Open Positions", f"{positions}/{total_positions}")
-
-st.markdown("---")
-
-# --- SECTION: REGIME PIVOT ENGINE (VIX/ADX Metrics) ---
-st.markdown("### 🧭 Regime Pivot Engine")
-
-# Get VIX and ADX from market data (use SPY as proxy for market-wide metrics)
-spy_data = market_data.get('SPY', {})
-vix = spy_data.get('vix', system_data.get('vix', 0))
-adx = spy_data.get('adx', 0)  # ADX might be per-symbol, use SPY as market proxy
-
-# Calculate ADX from market data if available
-if not adx and 'SPY' in market_data:
-    # Try to get ADX from indicators if available
-    indicators = market_data['SPY'].get('indicators', {})
-    adx = indicators.get('adx', 0)
-
-# Determine Active Strategy Mode based on Regime + VIX + ADX
-strategy_mode = "WAITING"
-strategy_emoji = "⏳"
-
-if regime == 'LOW_VOL_CHOP':
-    if adx and adx < 20:
-        strategy_mode = "🚜 FARMER (Iron Condor)"
-        strategy_emoji = "🚜"
-    else:
-        strategy_mode = "⚠️ CHOP (Trend Grinding - No Trade)"
-        strategy_emoji = "⚠️"
+if regime == 'COMPRESSED':
+    bg_color = "linear-gradient(90deg, #4f46e5 0%, #7c3aed 100%)" # Indigo/Purple
+    emoji = "🦁"
+    desc = "Volatility Beast (Buying Calendars)"
+elif regime == 'LOW_VOL_CHOP':
+    bg_color = "linear-gradient(90deg, #0ea5e9 0%, #3b82f6 100%)" # Blue
+    emoji = "🚜"
+    desc = "Range Farmer (Iron Condors)"
 elif regime == 'TRENDING':
-    if vix and vix < 13:
-        strategy_mode = "🛡️ SKEW (Ratio Backspread)"
-        strategy_emoji = "🛡️"
+    bg_color = "linear-gradient(90deg, #16a34a 0%, #22c55e 100%)" # Green
+    if vix < 13:
+        emoji = "🛡️"
+        desc = "Trend Engine (Ratio Skew)"
     else:
-        strategy_mode = "📈 TREND (Credit Spread)"
-        strategy_emoji = "📈"
+        emoji = "📈"
+        desc = "Trend Engine (Credit Spreads)"
 elif regime == 'HIGH_VOL_EXPANSION':
-    strategy_mode = "🔴 EXPANSION (Stand Down)"
-    strategy_emoji = "🔴"
+    bg_color = "linear-gradient(90deg, #ea580c 0%, #f97316 100%)" # Orange
+    emoji = "🏰"
+    desc = "Defense Mode (Hedging Only)"
 elif regime == 'EVENT_RISK':
-    strategy_mode = "🚨 EVENT (Blocked)"
-    strategy_emoji = "🚨"
+    bg_color = "linear-gradient(90deg, #dc2626 0%, #ef4444 100%)" # Red
+    emoji = "🚨"
+    desc = "Event Risk (No New Entries)"
 
-# Check for VOLATILITY BEAST window (low VIX + morning hours)
-now_hour = datetime.now().hour
-if vix and vix < 15 and 9 <= now_hour <= 10:
-    strategy_mode = "🦁 BEAST (Calendar Scan)"
-    strategy_emoji = "🦁"
+st.markdown(f"""
+    <div class="regime-box" style="background: {bg_color};">
+        <div class="regime-title">Active Market Regime</div>
+        <div class="regime-value">{emoji} {regime}</div>
+        <div class="regime-desc">{desc}</div>
+        <div style="font-size: 0.8rem; margin-top: 10px; opacity: 0.7;">
+            VIX: {vix:.2f} | ADX: {adx:.1f} | System Status: <span style="color:{'white' if latency < 60 else '#ffcccc'}">{status_text} ({latency:.0f}s ago)</span>
+        </div>
+    </div>
+""", unsafe_allow_html=True)
 
-# Display metrics in columns
-pivot_col1, pivot_col2, pivot_col3, pivot_col4 = st.columns(4)
+# 2. Key Metrics Grid
+k1, k2, k3, k4 = st.columns(4)
 
-with pivot_col1:
-    vix_delta = "-Low Vol" if vix and vix < 15 else "Normal" if vix else None
-    st.metric("VIX Level", f"{vix:.2f}" if vix else "N/A", delta=vix_delta)
+greeks = system.get('portfolio_risk', {})
+pos_count = system.get('open_positions', 0)
+total_count = system.get('total_positions', 0)
 
-with pivot_col2:
-    adx_delta = "Strong" if adx and adx > 25 else "Weak" if adx else None
-    st.metric("Trend Strength (ADX)", f"{adx:.1f}" if adx else "N/A", delta=adx_delta)
+with k1:
+    st.metric("Net Delta", f"{greeks.get('delta', 0):.2f}", help="Directional Exposure")
+with k2:
+    st.metric("Net Theta", f"${greeks.get('theta', 0):.2f}", help="Daily Time Decay Income")
+with k3:
+    st.metric("Net Vega", f"{greeks.get('vega', 0):.2f}", help="Volatility Exposure")
+with k4:
+    st.metric("Active Positions", f"{pos_count} / {total_count}", help="Current / Total Tracked")
 
-with pivot_col3:
-    st.metric("Market Regime", regime)
+# --- MAIN CONTENT ---
 
-with pivot_col4:
-    st.metric("Active Strategy Mode", strategy_mode)
+col_main, col_side = st.columns([2, 1])
 
-st.markdown("---")
-
-# --- POSITIONS TABLE ---
-positions_list = system_data.get('positions', [])
-if positions_list:
-    st.markdown("### 📊 Active Positions")
+with col_main:
+    # --- POSITION TRACKER ---
+    st.subheader("📋 Active Positions")
+    positions = system.get('positions', [])
     
-    pos_data = []
-    for pos in positions_list:
-        pos_data.append({
-            'Symbol': pos.get('symbol', 'UNKNOWN'),
-            'Strategy': pos.get('strategy', 'UNKNOWN'),
-            'Status': pos.get('status', 'UNKNOWN'),
-            'Entry Price': f"${pos.get('entry_price', 0):.2f}",
-            'Legs': pos.get('legs_count', 0),
-            'Bias': pos.get('bias', 'neutral'),
-            'Trade ID': pos.get('trade_id', '')[:15] + '...'
+    if positions:
+        # Flatten for display
+        df_pos = pd.DataFrame(positions)
+        
+        # Color coding for P&L (if we had live P&L streaming, adding placeholders)
+        # Brain doesn't stream live P&L yet, but we have entry prices.
+        # We can calculate estimated P&L using current market data if available.
+        
+        display_cols = ['symbol', 'strategy', 'status', 'entry_price', 'legs_count', 'timestamp']
+        # Rename columns
+        df_pos = df_pos.rename(columns={
+            'symbol': 'Symbol', 'strategy': 'Strategy', 'status': 'Status',
+            'entry_price': 'Entry', 'legs_count': 'Legs', 'timestamp': 'Time'
         })
+        
+        # Format Time
+        df_pos['Time'] = pd.to_datetime(df_pos['Time']).dt.strftime('%H:%M:%S')
+        
+        st.dataframe(
+            df_pos[display_cols], 
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Entry": st.column_config.NumberColumn(format="$%.2f"),
+            }
+        )
+    else:
+        st.info("📭 No active positions. Waiting for signals...")
+
+    st.markdown("---")
     
-    if pos_data:
-        df = pd.DataFrame(pos_data)
-        st.dataframe(df, width=1200, hide_index=True)
-else:
-    st.info("📭 No active positions tracked by Brain")
-
-st.markdown("---")
-
-# --- SECTION 2: MARKET INTELLIGENCE (Per Symbol) ---
-st.markdown("### 📊 Asset Surveillance")
-
-for symbol, metrics in market_data.items():
-    # Warm-up Check
-    is_warm = metrics.get('is_warm', False)
-    candle_count = metrics.get('candle_count', 0)
+    # --- MARKET SCANNER ---
+    st.subheader("📡 Market Scanner")
     
-    header_text = f"{symbol} - ${metrics.get('price', 0):.2f} ({metrics.get('trend', 'FLAT')})"
-    if not is_warm:
-        header_text += f" [❄️ WARMING UP: {candle_count}/200]"
-        
-    with st.expander(header_text, expanded=True):
-        
-        # Row 1: Key Signals
-        m1, m2, m3, m4 = st.columns(4)
-        
-        with m1:
-            iv_rank = metrics.get('iv_rank', 0)
-            st.metric("IV Rank", f"{iv_rank:.0f}%", delta="High" if iv_rank > 50 else "Low")
-            
-        with m2:
-            rsi = metrics.get('rsi', 50)
-            st.metric("RSI (14)", f"{rsi:.1f}")
-            
-        with m3:
-            # Volume Profile POC distance
-            poc = metrics.get('poc', 0)
-            price = metrics.get('price', 0)
-            dist_pct = ((price - poc) / poc) * 100 if poc > 0 else 0
-            st.metric("Dist to POC", f"{dist_pct:+.2f}%", help=f"POC: ${poc:.2f}")
-            
-        with m4:
-            signal = metrics.get('active_signal')
-            if signal:
-                st.warning(f"🚨 {signal}")
-            else:
-                st.info("Scanning...")
-
-        # Row 2: Visuals
-        g1, g2 = st.columns(2)
-        
-        with g1:
-            # RSI Gauge
-            fig_rsi = go.Figure(go.Indicator(
-                mode = "gauge+number",
-                value = rsi,
-                title = {'text': "RSI Heatmap"},
-                gauge = {
-                    'axis': {'range': [0, 100]},
-                    'bar': {'color': "white"},
-                    'steps': [
-                        {'range': [0, 30], 'color': "green"},
-                        {'range': [30, 70], 'color': "gray"},
-                        {'range': [70, 100], 'color': "red"}],
-                    'threshold': {'line': {'color': "blue", 'width': 4}, 'thickness': 0.75, 'value': rsi}
-                }
-            ))
-            fig_rsi.update_layout(height=180, margin=dict(l=20,r=20,t=30,b=20))
-            st.plotly_chart(fig_rsi, use_container_width=True, key=f"rsi_{symbol}", config={'displayModeBar': False})
-
-        with g2:
-            # Market Structure (Price vs POC/Value Area)
-            poc = metrics.get('poc', 0)
-            vah = metrics.get('vah', 0)
-            val = metrics.get('val', 0)
-            price = metrics.get('price', 0)
-            
-            if poc > 0:
-                # Normalize range for display
-                range_min = min(val, price) * 0.995
-                range_max = max(vah, price) * 1.005
-                
-                fig_struct = go.Figure()
-                
-                # Value Area Rect
-                fig_struct.add_shape(type="rect",
-                    x0=val, y0=0, x1=vah, y1=1,
-                    fillcolor="rgba(0,0,255,0.1)", line=dict(width=0),
-                )
-                
-                # Lines
-                fig_struct.add_trace(go.Scatter(x=[poc, poc], y=[0, 1], mode="lines", name="POC", line=dict(color="blue", width=3, dash="dash")))
-                fig_struct.add_trace(go.Scatter(x=[price, price], y=[0, 1], mode="lines", name="Price", line=dict(color="green", width=4)))
-                
-                fig_struct.update_layout(
-                    title="Market Structure (Auction Theory)",
-                    height=180,
-                    margin=dict(l=20,r=20,t=30,b=20),
-                    xaxis=dict(range=[range_min, range_max], title="Price"),
-                    yaxis=dict(showticklabels=False, range=[0, 1]),
-                    showlegend=True
-                )
-                st.plotly_chart(fig_struct, use_container_width=True, key=f"struct_{symbol}", config={'displayModeBar': False})
-            else:
-                st.info("Building Volume Profile...")
-
-# --- SECTION 3: PILOT SCORECARD (Execution Quality) ---
-st.markdown("---")
-st.markdown("### ✈️ Pilot Scorecard")
-
-# Load Pilot Data
-pilot_file = 'pilot_stats.json'
-pilot_stats = {
-    'total_trades': 0,
-    'avg_slippage': 0.0,
-    'avg_latency': 0.0,
-    'win_rate': 0.0,
-    'regime_changes_24h': 0,
-    'closed_trades_count': 0
-}
-pilot_trades = []
-pilot_latency_log = []
-
-if os.path.exists(pilot_file):
-    try:
-        with open(pilot_file, 'r') as f:
-            pilot_data = json.load(f)
-            # Calculate stats
-            trades = pilot_data.get('trades', [])
-            regime_changes = pilot_data.get('regime_changes', [])
-            
-            if trades:
-                pilot_stats['total_trades'] = len(trades)
-                pilot_stats['avg_slippage'] = sum(t.get('slippage', 0) for t in trades) / len(trades)
-                pilot_stats['avg_latency'] = sum(t.get('latency_seconds', 0) for t in trades) / len(trades)
-                
-                # Win rate (for closed trades with P&L)
-                closed_trades_with_pnl = [t for t in trades if t.get('side') == 'CLOSE' and t.get('pnl_pct') is not None]
-                pilot_stats['closed_trades_count'] = len(closed_trades_with_pnl)
-                if closed_trades_with_pnl:
-                    wins = sum(1 for t in closed_trades_with_pnl if t.get('pnl_pct', 0) > 0)
-                    pilot_stats['win_rate'] = (wins / len(closed_trades_with_pnl)) * 100
-                
-                # Get recent trades for charts
-                pilot_trades = sorted(trades, key=lambda x: x.get('fill_time', ''), reverse=True)[:100]
-                pilot_latency_log = pilot_data.get('latency_log', [])[-100:]
-            
-            # Count regime changes in last 24 hours
-            now = datetime.now()
-            pilot_stats['regime_changes_24h'] = sum(
-                1 for rc in regime_changes
-                if (now - datetime.fromisoformat(rc['timestamp'])).total_seconds() < 86400
-            )
-    except Exception as e:
-        st.warning(f"⚠️ Could not load pilot stats: {e}")
-
-# Key Metrics Row
-p1, p2, p3, p4 = st.columns(4)
-
-with p1:
-    total_trades = pilot_stats['total_trades']
-    st.metric("Trades Executed", f"{total_trades}")
-
-with p2:
-    avg_slippage = pilot_stats['avg_slippage']
-    slippage_color = "normal" if avg_slippage <= 0.05 else "inverse"
-    st.metric("Avg Slippage", f"${avg_slippage:.4f}", help="Price difference between signal and fill", delta=None if avg_slippage <= 0.05 else "⚠️ High")
-
-with p3:
-    avg_latency = pilot_stats['avg_latency']
-    latency_color = "normal" if avg_latency <= 5.0 else "inverse"
-    st.metric("Avg Latency", f"{avg_latency:.3f}s", help="Time from signal to fill", delta=None if avg_latency <= 5.0 else "⚠️ Slow")
-
-with p4:
-    regime_changes = pilot_stats['regime_changes_24h']
-    st.metric("Regime Changes (24h)", f"{regime_changes}", help="Market regime switches in last 24 hours")
-
-# Charts Row
-if pilot_trades:
-    c1, c2 = st.columns(2)
+    m_cols = st.columns(4)
+    symbols = ['SPY', 'QQQ', 'IWM', 'DIA']
     
-    with c1:
-        # Execution Quality Chart (Slippage Histogram)
-        slippage_data = [t.get('slippage_direction', 0) for t in pilot_trades if t.get('slippage_direction') is not None]
-        if slippage_data:
-            fig_slippage = go.Figure()
-            fig_slippage.add_trace(go.Histogram(
-                x=slippage_data,
-                nbinsx=30,
-                name="Slippage",
-                marker_color='rgba(59, 130, 246, 0.7)'
-            ))
-            fig_slippage.add_vline(x=0, line_dash="dash", line_color="green", annotation_text="Perfect Fill")
-            fig_slippage.update_layout(
-                title="Execution Quality (Slippage Distribution)",
-                xaxis_title="Slippage Direction (Positive = Bad, Negative = Good)",
-                yaxis_title="Frequency",
-                height=300,
-                margin=dict(l=20,r=20,t=40,b=20)
-            )
-            st.plotly_chart(fig_slippage, use_container_width=True, key="slippage_chart", config={'displayModeBar': False})
-    
-    with c2:
-        # Latency Timeline
-        if pilot_latency_log:
-            latency_data = [{
-                'time': datetime.fromisoformat(log['timestamp']),
-                'latency': log['latency_seconds']
-            } for log in pilot_latency_log if log.get('timestamp') and log.get('latency_seconds') is not None]
+    for i, sym in enumerate(symbols):
+        with m_cols[i]:
+            data = market.get(sym, {})
+            price = data.get('price', 0)
+            trend = data.get('trend', 'FLAT')
+            flow = data.get('flow', 'NEUTRAL')
             
-            if latency_data:
-                fig_latency = go.Figure()
-                fig_latency.add_trace(go.Scatter(
-                    x=[d['time'] for d in latency_data],
-                    y=[d['latency'] for d in latency_data],
-                    mode='markers+lines',
-                    name='Latency',
-                    marker=dict(color='rgba(236, 72, 153, 0.7)', size=6),
-                    line=dict(color='rgba(236, 72, 153, 0.5)', width=1)
-                ))
-                fig_latency.add_hline(y=5.0, line_dash="dash", line_color="red", annotation_text="5s Threshold")
-                fig_latency.update_layout(
-                    title="Latency Timeline",
-                    xaxis_title="Time",
-                    yaxis_title="Latency (seconds)",
-                    height=300,
-                    margin=dict(l=20,r=20,t=40,b=20)
-                )
-                st.plotly_chart(fig_latency, use_container_width=True, key="latency_chart", config={'displayModeBar': False})
-        
-        # Win Rate (if available)
-        if pilot_stats['closed_trades_count'] > 0:
-            win_rate = pilot_stats['win_rate']
-            win_color = "green" if win_rate >= 50 else "red"
-            st.markdown(f"**Win Rate:** <span style='color:{win_color}'>{win_rate:.1f}%</span> ({pilot_stats['closed_trades_count']} closed trades)", unsafe_allow_html=True)
-else:
-    st.info("📊 No pilot data yet. Trades will populate here automatically.")
+            # Card Style
+            card_bg = "#334155"
+            trend_icon = "➡️"
+            if trend == 'UPTREND': 
+                trend_icon = "↗️"
+                card_bg = "rgba(34, 197, 94, 0.1)"
+            elif trend == 'DOWNTREND': 
+                trend_icon = "↘️"
+                card_bg = "rgba(239, 68, 68, 0.1)"
+            
+            st.markdown(f"""
+                <div style="background-color: {card_bg}; padding: 15px; border-radius: 8px; border: 1px solid #475569; text-align: center;">
+                    <div style="font-size: 1.2rem; font-weight: bold;">{sym}</div>
+                    <div style="font-size: 1.5rem; font-weight: 900;">${price:.2f}</div>
+                    <div style="margin-top: 10px; font-size: 0.9rem;">
+                        <div>{trend_icon} {trend}</div>
+                        <div style="color: #94a3b8;">Flow: {flow}</div>
+                        <div style="color: #94a3b8; font-size: 0.8rem; margin-top:5px;">RSI: {data.get('rsi', 0):.1f}</div>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
 
-# Footer
+with col_side:
+    # --- PERFORMANCE ---
+    st.subheader("📈 Pilot Performance")
+    
+    # Calculate cumulative P&L from closed trades
+    trades = raw_pilot.get('trades', [])
+    closed_trades = [t for t in trades if t.get('side') == 'CLOSE']
+    
+    if closed_trades:
+        df_perf = pd.DataFrame(closed_trades)
+        df_perf['pnl_dollars'] = df_perf['pnl_dollars'].fillna(0)
+        df_perf['fill_time'] = pd.to_datetime(df_perf['fill_time'])
+        df_perf = df_perf.sort_values('fill_time')
+        df_perf['cumulative_pnl'] = df_perf['pnl_dollars'].cumsum()
+        
+        # KPI Cards
+        total_pnl = df_perf['pnl_dollars'].sum()
+        win_rate = (len(df_perf[df_perf['pnl_dollars'] > 0]) / len(df_perf) * 100) if len(df_perf) > 0 else 0
+        
+        c1, c2 = st.columns(2)
+        c1.metric("Total P&L", f"${total_pnl:.2f}", delta=f"{len(df_perf)} Trades")
+        c2.metric("Win Rate", f"{win_rate:.1f}%")
+        
+        # Mini Chart
+        fig = px.area(df_perf, x='fill_time', y='cumulative_pnl', title=None)
+        fig.update_layout(
+            height=200, 
+            margin=dict(l=0,r=0,t=10,b=0),
+            xaxis_title=None,
+            yaxis_title=None,
+            showlegend=False,
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            font=dict(color='white')
+        )
+        # Line color based on P&L
+        line_color = '#4ade80' if total_pnl >= 0 else '#ef4444'
+        fig.update_traces(line_color=line_color, fillcolor=f"rgba{tuple(int(line_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4)) + (0.1,)}")
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+        
+    else:
+        st.info("No closed trades yet.")
+        st.metric("Total P&L", "$0.00")
+
+    # --- EXECUTION QUALITY ---
+    st.subheader("⚡ Execution Stats")
+    
+    if trades:
+        avg_slip = sum(abs(t.get('slippage', 0)) for t in trades) / len(trades)
+        avg_lat = sum(t.get('latency_seconds', 0) for t in trades) / len(trades)
+        
+        e1, e2 = st.columns(2)
+        e1.metric("Avg Slippage", f"{avg_slip:.3f}%")
+        e2.metric("Avg Latency", f"{avg_lat:.2f}s")
+    else:
+        st.caption("Waiting for trade data...")
+
+# --- AUTO REFRESH LOGIC ---
 if auto_refresh:
-    time.sleep(refresh_interval)
+    time.sleep(2)
     st.rerun()
