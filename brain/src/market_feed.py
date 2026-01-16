@@ -691,7 +691,6 @@ class MarketFeed:
                     
                     # CRITICAL: Send Discord notification when order ACTUALLY FILLS (not just when approved)
                     try:
-                        from src.notifier import get_notifier
                         notifier = get_notifier()
                         symbol = pos.get('symbol', 'UNKNOWN')
                         strategy = pos.get('strategy', 'UNKNOWN')
