@@ -1316,6 +1316,18 @@ class MarketFeed:
                             pos['entry_price'] = round(new_entry, 2)
                             updated_count += 1
             
+            # 4. Adopt orphans (in Tradier but not in Brain)
+            orphans = tradier_symbols - brain_symbols
+            if orphans:
+                logging.info(f"🕵️ SYNC: Found {len(orphans)} orphan position(s) in Tradier not tracked by Brain")
+                # Use the full orphan adoption logic from reconcile_state
+                # This requires fetching full position data with grouping, so call reconcile_state's logic
+                # For now, trigger a full reconcile which will adopt orphans
+                logging.info(f"   Triggering orphan adoption via reconcile_state...")
+                await self.reconcile_state()
+                # Re-count after adoption (reconcile_state will save positions)
+                updated_count += len(orphans)
+            
             # Save changes
             if updated_count > 0 or removed_count > 0:
                 self._save_positions_to_disk()
@@ -1638,8 +1650,16 @@ class MarketFeed:
                         for leg in pos.get('legs', []):
                             brain_symbols.add(leg.get('symbol'))
                     
+                    # DEBUG: Log what we're comparing
+                    logging.info(f"🔍 SYNC DEBUG: Tradier has {len(tradier_symbols)} symbol(s), Brain has {len(brain_symbols)} symbol(s)")
+                    if tradier_symbols:
+                        logging.info(f"   Tradier symbols: {sorted(tradier_symbols)}")
+                    if brain_symbols:
+                        logging.info(f"   Brain symbols: {sorted(brain_symbols)}")
+                    
                     orphans = tradier_symbols - brain_symbols
                     if orphans:
+                        logging.info(f"   Orphan symbols: {sorted(orphans)}")
                         logging.info(f"🕵️ ORPHAN DETECTED: Found {len(orphans)} position(s) in Tradier not tracked by Brain")
                         # Group orphans by trade - CRITICAL: Adopt entire trade if ANY leg is orphaned
                         orphan_trades = {}
