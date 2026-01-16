@@ -3694,6 +3694,10 @@ class MarketFeed:
             
             if order_id:
                 signal_time = datetime.now()
+                # CRITICAL: Store underlying entry price for Calendar/Ratio spreads (for price move calculations)
+                # entry_price is the option debit/credit paid, not the underlying stock price
+                underlying_entry_price = indicators.get('price', 0)  # Current underlying price at entry
+                
                 self.open_positions[trade_id] = {
                     'symbol': symbol,
                     'strategy': strategy,
@@ -3701,7 +3705,8 @@ class MarketFeed:
                     'open_order_id': str(order_id),
                     'opening_timestamp': signal_time,
                     'legs': updated_legs,  # Use updated legs with dynamic quantities
-                    'entry_price': round(limit_price, 2),
+                    'entry_price': round(limit_price, 2),  # Option debit/credit paid
+                    'underlying_entry_price': round(underlying_entry_price, 2) if underlying_entry_price > 0 else None,  # Underlying stock price at entry (for price move calculations)
                     'bias': bias,
                     'timestamp': signal_time,
                     'highest_pnl': -100.0,
