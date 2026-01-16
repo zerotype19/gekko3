@@ -190,34 +190,42 @@ with col_main:
         # Brain doesn't stream live P&L yet, but we have entry prices.
         # We can calculate estimated P&L using current market data if available.
         
-        # Define columns we want to display (check if they exist first)
-        display_cols = ['symbol', 'strategy', 'status', 'entry_price', 'legs_count', 'timestamp']
-        # Filter to only columns that exist in the DataFrame
-        available_cols = [col for col in display_cols if col in df_pos.columns]
-        
-        # Select only available columns before renaming
-        df_pos = df_pos[available_cols].copy()
-        
-        # Rename columns for display
-        rename_map = {
-            'symbol': 'Symbol', 'strategy': 'Strategy', 'status': 'Status',
-            'entry_price': 'Entry', 'legs_count': 'Legs', 'timestamp': 'Time'
+        # Define columns we want to display (with defaults for missing columns)
+        display_cols_map = {
+            'symbol': 'Symbol',
+            'strategy': 'Strategy',
+            'status': 'Status',
+            'entry_price': 'Entry',
+            'legs_count': 'Legs',
+            'timestamp': 'Time'
         }
-        # Only rename columns that exist
-        rename_map = {k: v for k, v in rename_map.items() if k in df_pos.columns}
-        df_pos = df_pos.rename(columns=rename_map)
+        
+        # Build display DataFrame with only available columns
+        display_data = {}
+        for orig_col, display_name in display_cols_map.items():
+            if orig_col in df_pos.columns:
+                display_data[display_name] = df_pos[orig_col]
+            else:
+                # Missing column - add with None/NaN
+                display_data[display_name] = None
+        
+        # Create new DataFrame with renamed columns
+        df_display = pd.DataFrame(display_data)
         
         # Format Time if it exists
-        if 'Time' in df_pos.columns:
-            df_pos['Time'] = pd.to_datetime(df_pos['Time'], errors='coerce').dt.strftime('%H:%M:%S')
+        if 'Time' in df_display.columns and df_display['Time'].notna().any():
+            df_display['Time'] = pd.to_datetime(df_display['Time'], errors='coerce').dt.strftime('%H:%M:%S')
+        
+        # Build column config (only for columns that exist and have data)
+        column_config = {}
+        if 'Entry' in df_display.columns and df_display['Entry'].notna().any():
+            column_config['Entry'] = st.column_config.NumberColumn(format="$%.2f")
         
         st.dataframe(
-            df_pos, 
-            use_container_width=True,
+            df_display, 
+            width='stretch',
             hide_index=True,
-            column_config={
-                "Entry": st.column_config.NumberColumn(format="$%.2f"),
-            } if "Entry" in df_pos.columns else {}
+            column_config=column_config if column_config else None
         )
     else:
         st.info("📭 No active positions. Waiting for signals...")
@@ -297,7 +305,7 @@ with col_side:
         # Line color based on P&L
         line_color = '#4ade80' if total_pnl >= 0 else '#ef4444'
         fig.update_traces(line_color=line_color, fillcolor=f"rgba{tuple(int(line_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4)) + (0.1,)}")
-        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+        st.plotly_chart(fig, width='stretch', config={'displayModeBar': False})
         
     else:
         st.info("No closed trades yet.")
