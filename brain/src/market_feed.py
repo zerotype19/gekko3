@@ -1113,6 +1113,9 @@ class MarketFeed:
                 # Check if we need to wait before retrying (after cancellation/rejection)
                 last_attempt = pos.get('last_close_attempt')
                 if last_attempt:
+                    # Handle string datetime (from JSON) - convert to datetime if needed
+                    if isinstance(last_attempt, str):
+                        last_attempt = datetime.fromisoformat(last_attempt)
                     seconds_since_attempt = (now - last_attempt).total_seconds()
                     # Wait 10 seconds after rejection (longer delay for rejected orders)
                     # Wait 5 seconds after cancellation
