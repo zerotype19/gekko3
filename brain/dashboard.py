@@ -305,7 +305,7 @@ with col_side:
         # Line color based on P&L
         line_color = '#4ade80' if total_pnl >= 0 else '#ef4444'
         fig.update_traces(line_color=line_color, fillcolor=f"rgba{tuple(int(line_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4)) + (0.1,)}")
-        st.plotly_chart(fig, width='stretch', config={'displayModeBar': False})
+        st.plotly_chart(fig, config={'displayModeBar': False})
         
     else:
         st.info("No closed trades yet.")
