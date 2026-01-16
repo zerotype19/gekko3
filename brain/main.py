@@ -73,6 +73,10 @@ class BrainSupervisor:
         
         # Heartbeat timing (Phase C: Final Polish)
         self.last_heartbeat_time = 0
+        
+        # Daily initialization tracking (9:30 AM ET on trading days)
+        self.last_daily_init_date = None
+        self.daily_init_time = time(9, 30)  # 9:30 AM ET
 
     def is_market_hours(self):
         """
