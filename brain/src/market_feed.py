@@ -965,38 +965,33 @@ class MarketFeed:
                         # Try to extract avg_fill_price from order details
                         fill_price = order_details.get('price') or order_details.get('avg_fill_price') or signal_price
                     
-                    # Calculate realized P&L (exit_price would be fill_price for CLOSE)
+                   # Calculate realized P&L (exit_price would be fill_price for CLOSE)
                     exit_price = fill_price
-                    pnl_pct = None
-                    pnl_dollars = None
+                    pnl_pct = 0.0
+                    pnl_dollars = 0.0
+                    
                     if entry_price > 0:
-                        # CRITICAL FIX: Strategy-aware P&L calculation for realized trades
-                        strategy = pos.get('strategy', '')
+                        # Determine flow based on order type (default to debit close if unknown)
+                        close_type = pos.get('close_order_type', 'debit')
                         
-                        if strategy in ['CREDIT_SPREAD', 'IRON_CONDOR', 'IRON_BUTTERFLY']:
-                            # Credit Strategies: entry = credit received, exit = debit paid (both positive)
-                            pnl_dollars = entry_price - exit_price
-                            pnl_pct = ((entry_price - exit_price) / entry_price) * 100 if entry_price > 0 else 0
-                        elif strategy in ['CALENDAR_SPREAD', 'RATIO_SPREAD']:
-                            # Debit Strategies: entry = debit paid (positive), exit might be credit or debit
-                            # For realized fills, exit_price should be positive (what we paid/received in absolute terms)
-                            # But we need to know if it's credit or debit from the order type
-                            # Since we're here (filled closing order), check if exit was for credit or debit
-                            # Note: exit_price here is the fill_price from order details, which is the limit price
-                            # The actual P&L depends on whether we closed for credit or debit
-                            # For now, assume exit_price represents what we paid (debit close)
-                            # If the trade was profitable, exit_price would be smaller than entry_price
-                            # This is a simplification - ideally we'd track if the close was credit or debit
-                            # P&L = entry_debit - exit_debit (if exit is smaller, profit)
-                            # OR: P&L = exit_credit - entry_debit (if we closed for credit)
-                            # For now, treat exit_price as debit paid (standard case)
-                            pnl_dollars = entry_price - exit_price
-                            pnl_pct = ((entry_price - exit_price) / entry_price) * 100 if entry_price > 0 else 0
-                            # TODO: Enhance to track if close was credit or debit from order type
+                        if pos['strategy'] in ['CALENDAR_SPREAD', 'RATIO_SPREAD']:
+                            # Debit Strategies: Open = Debit (-), Close = Credit (+) or Debit (-)
+                            # Entry price is stored as positive magnitude of debit.
+                            if close_type == 'credit':
+                                pnl_dollars = exit_price - entry_price
+                            else:
+                                # We paid to open AND paid to close (Loss)
+                                pnl_dollars = -exit_price - entry_price
                         else:
-                            # Default: Assume credit strategy (backward compatibility)
-                            pnl_dollars = entry_price - exit_price
-                            pnl_pct = ((entry_price - exit_price) / entry_price) * 100 if entry_price > 0 else 0
+                            # Credit Strategies: Open = Credit (+), Close = Debit (-)
+                            # Entry price is stored as positive magnitude of credit.
+                            if close_type == 'debit':
+                                pnl_dollars = entry_price - exit_price
+                            else:
+                                # We received to open AND received to close (Profit)
+                                pnl_dollars = entry_price + exit_price
+
+                        pnl_pct = (pnl_dollars / entry_price) * 100
                     
                     # Record CLOSE trade execution
                     try:
@@ -2303,8 +2298,6 @@ class MarketFeed:
             logging.warning(f"⚠️ Could not fetch actual positions for {trade_id}, using stored legs")
             actual_positions = {}  # Will use fallback
         
-        # Add Aggressive Buffer to Limit Price (Pay more to close)
-        execution_price = limit_price + 0.05
         
         # Build legs using ACTUAL quantities from Tradier
         legs = []
@@ -2398,6 +2391,15 @@ class MarketFeed:
             # Net < 0 = Debit (We pay money when closing)
             close_order_type = 'credit' if close_net_price >= 0 else 'debit'
             logging.info(f"💰 CLOSE ORDER TYPE ({pos['strategy']}): Net ${close_net_price:+.2f} → Type: {close_order_type}")
+
+        # Calculate positive execution price based on type
+        if close_order_type == 'credit':
+            # We are selling/receiving money. Accept slightly less than net to get filled.
+            execution_price = max(0.01, close_net_price - 0.05)
+        else:
+            # We are buying/paying money. Pay slightly more than net (magnitude) to get filled.
+            # close_net_price is negative here, so abs() gets the magnitude.
+            execution_price = abs(close_net_price) + 0.05
         
         proposal = {
             'symbol': pos['symbol'],
@@ -2423,6 +2425,7 @@ class MarketFeed:
                 pos['status'] = 'CLOSING'
                 pos['close_order_id'] = str(order_id)
                 pos['close_limit_price'] = execution_price  # Store for smart chasing
+                pos['close_order_type'] = close_order_type # Save for P&L calc
                 pos['closing_timestamp'] = datetime.now()
                 self._save_positions_to_disk()
                 logging.info(f"📤 Close Order Sent: {order_id}. Waiting for fill...")
@@ -3442,13 +3445,19 @@ class MarketFeed:
         if short_bid == 0 or long_ask == 0: 
             return  # No liquidity
 
-        fair_credit = short_bid - long_ask
-        limit_price = max(0.05, fair_credit - 0.05)  # 5 cent buffer
+      fair_credit = short_bid - long_ask
         
-        # CRITICAL FIX: Explicitly set order type for credit spreads
-        # Credit spreads are always CREDIT orders (we receive money)
-        # This ensures GatekeeperDO doesn't default incorrectly
-        order_type = 'credit'  # Credit spreads always receive net credit
+        # Determine if this is a Credit or Debit spread based on market prices
+        if fair_credit >= 0:
+            # Standard Credit Spread (We receive money)
+            order_type = 'credit'
+            limit_price = max(0.05, fair_credit - 0.05)  # Accept slightly less credit to ensure fill
+        else:
+            # Inverted/Debit Spread (We pay money)
+            order_type = 'debit'
+            limit_price = abs(fair_credit) + 0.05  # Pay slightly more to ensure fill
+        
+        logging.info(f"💰 PRICING ({strategy}): Fair Net ${fair_credit:.2f} -> Order {order_type} @ ${limit_price:.2f}")
 
         # 5. Real Metrics (No Stubs)
         vix = indicators.get('vix') or 0
