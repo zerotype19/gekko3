@@ -23,16 +23,213 @@
     "entry_price": 6.22,
     "bias": "bullish",
     "timestamp": "2026-01-15T16:03:26.186257",
-    "highest_pnl": 94.77491961414792,
+    "highest_pnl": 97.42765273311899,
     "status": "OPEN",
     "live_greeks": {
-      "delta": 1.309226670329032,
-      "theta": -14.487616034729616,
-      "vega": 8.796306341662444
+      "delta": 0.22939042205037197,
+      "theta": -12.639296652814927,
+      "vega": 9.83612551237588
     },
     "close_limit_price": 0.3950000000000002,
     "cancel_attempt_time": "2026-01-16T10:41:53.576007",
     "cancel_failed_count": 10,
     "unfillable": true
+  },
+  "IWM_IRON_BUTTERFLY_1768585263": {
+    "symbol": "IWM",
+    "strategy": "IRON_BUTTERFLY",
+    "status": "OPEN",
+    "open_order_id": "24426529",
+    "opening_timestamp": "2026-01-16T12:41:03.742668",
+    "legs": [
+      {
+        "symbol": "IWM260213C00267000",
+        "expiration": "2026-02-13",
+        "strike": 267.0,
+        "type": "CALL",
+        "quantity": 1,
+        "side": "SELL"
+      },
+      {
+        "symbol": "IWM260213P00267000",
+        "expiration": "2026-02-13",
+        "strike": 267.0,
+        "type": "PUT",
+        "quantity": 1,
+        "side": "SELL"
+      },
+      {
+        "symbol": "IWM260213C00277000",
+        "expiration": "2026-02-13",
+        "strike": 277.0,
+        "type": "CALL",
+        "quantity": 1,
+        "side": "BUY"
+      },
+      {
+        "symbol": "IWM260213P00257000",
+        "expiration": "2026-02-13",
+        "strike": 257.0,
+        "type": "PUT",
+        "quantity": 1,
+        "side": "BUY"
+      }
+    ],
+    "entry_price": 6.92,
+    "bias": "neutral",
+    "timestamp": "2026-01-16T12:42:36.396454",
+    "highest_pnl": 0.4335260115607101,
+    "signal_price": 6.92,
+    "signal_timestamp": "2026-01-16T12:41:03.742668",
+    "last_pending_log_time": "2026-01-16T12:42:10.417316",
+    "live_greeks": {
+      "delta": -3.1981666006946945,
+      "theta": 3.7561341847132272,
+      "vega": -12.584169473667114
+    }
+  },
+  "SPY_IRON_BUTTERFLY_1768586406": {
+    "symbol": "SPY",
+    "strategy": "IRON_BUTTERFLY",
+    "status": "OPENING",
+    "open_order_id": "24428554",
+    "opening_timestamp": "2026-01-16T13:00:06.493480",
+    "legs": [
+      {
+        "symbol": "SPY260213C00692000",
+        "expiration": "2026-02-13",
+        "strike": 692.0,
+        "type": "CALL",
+        "quantity": 1,
+        "side": "SELL"
+      },
+      {
+        "symbol": "SPY260213P00692000",
+        "expiration": "2026-02-13",
+        "strike": 692.0,
+        "type": "PUT",
+        "quantity": 1,
+        "side": "SELL"
+      },
+      {
+        "symbol": "SPY260213C00702000",
+        "expiration": "2026-02-13",
+        "strike": 702.0,
+        "type": "CALL",
+        "quantity": 1,
+        "side": "BUY"
+      },
+      {
+        "symbol": "SPY260213P00682000",
+        "expiration": "2026-02-13",
+        "strike": 682.0,
+        "type": "PUT",
+        "quantity": 1,
+        "side": "BUY"
+      }
+    ],
+    "entry_price": 8.46,
+    "bias": "neutral",
+    "timestamp": "2026-01-16T13:00:06.493480",
+    "highest_pnl": -100.0,
+    "signal_price": 8.46,
+    "signal_timestamp": "2026-01-16T13:00:06.493480",
+    "last_pending_log_time": "2026-01-16T13:00:09.966764"
+  },
+  "DIA_IRON_BUTTERFLY_1768586408": {
+    "symbol": "DIA",
+    "strategy": "IRON_BUTTERFLY",
+    "status": "OPENING",
+    "open_order_id": "24428579",
+    "opening_timestamp": "2026-01-16T13:00:08.614865",
+    "legs": [
+      {
+        "symbol": "DIA260213C00494000",
+        "expiration": "2026-02-13",
+        "strike": 494.0,
+        "type": "CALL",
+        "quantity": 1,
+        "side": "SELL"
+      },
+      {
+        "symbol": "DIA260213P00494000",
+        "expiration": "2026-02-13",
+        "strike": 494.0,
+        "type": "PUT",
+        "quantity": 1,
+        "side": "SELL"
+      },
+      {
+        "symbol": "DIA260213C00504000",
+        "expiration": "2026-02-13",
+        "strike": 504.0,
+        "type": "CALL",
+        "quantity": 1,
+        "side": "BUY"
+      },
+      {
+        "symbol": "DIA260213P00484000",
+        "expiration": "2026-02-13",
+        "strike": 484.0,
+        "type": "PUT",
+        "quantity": 1,
+        "side": "BUY"
+      }
+    ],
+    "entry_price": 7.58,
+    "bias": "neutral",
+    "timestamp": "2026-01-16T13:00:08.614865",
+    "highest_pnl": -100.0,
+    "signal_price": 7.58,
+    "signal_timestamp": "2026-01-16T13:00:08.614865",
+    "last_pending_log_time": "2026-01-16T13:00:09.966764"
+  },
+  "IWM_IRON_BUTTERFLY_1768586411": {
+    "symbol": "IWM",
+    "strategy": "IRON_BUTTERFLY",
+    "status": "OPENING",
+    "open_order_id": "24428608",
+    "opening_timestamp": "2026-01-16T13:00:11.525434",
+    "legs": [
+      {
+        "symbol": "IWM260213C00267000",
+        "expiration": "2026-02-13",
+        "strike": 267.0,
+        "type": "CALL",
+        "quantity": 1,
+        "side": "SELL"
+      },
+      {
+        "symbol": "IWM260213P00267000",
+        "expiration": "2026-02-13",
+        "strike": 267.0,
+        "type": "PUT",
+        "quantity": 1,
+        "side": "SELL"
+      },
+      {
+        "symbol": "IWM260213C00277000",
+        "expiration": "2026-02-13",
+        "strike": 277.0,
+        "type": "CALL",
+        "quantity": 1,
+        "side": "BUY"
+      },
+      {
+        "symbol": "IWM260213P00257000",
+        "expiration": "2026-02-13",
+        "strike": 257.0,
+        "type": "PUT",
+        "quantity": 1,
+        "side": "BUY"
+      }
+    ],
+    "entry_price": 6.92,
+    "bias": "neutral",
+    "timestamp": "2026-01-16T13:00:11.525434",
+    "highest_pnl": -100.0,
+    "signal_price": 6.92,
+    "signal_timestamp": "2026-01-16T13:00:11.525434",
+    "last_pending_log_time": "2026-01-16T13:00:15.728472"
   }
 }

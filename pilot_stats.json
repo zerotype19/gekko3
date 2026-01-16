@@ -35,6 +35,96 @@
       "pnl_pct": 98.91,
       "pnl_dollars": 99.9,
       "recorded_at": "2026-01-16T10:04:09.828539"
+    },
+    {
+      "trade_id": "SPY_RATIO_SPREAD_1768581005",
+      "symbol": "SPY",
+      "strategy": "RATIO_SPREAD",
+      "side": "OPEN",
+      "signal_price": 0.29,
+      "fill_price": 0.29,
+      "slippage": 0.0,
+      "slippage_direction": 0.0,
+      "latency_seconds": 16.311,
+      "signal_time": "2026-01-16T11:30:05.257665",
+      "fill_time": "2026-01-16T11:30:21.568488",
+      "entry_price": null,
+      "exit_price": null,
+      "pnl_pct": null,
+      "pnl_dollars": null,
+      "recorded_at": "2026-01-16T11:30:22.708155"
+    },
+    {
+      "trade_id": "SPY_RATIO_SPREAD_1768581005",
+      "symbol": "SPY",
+      "strategy": "RATIO_SPREAD",
+      "side": "CLOSE",
+      "signal_price": 0.33,
+      "fill_price": 0.33,
+      "slippage": 0.0,
+      "slippage_direction": -0.0,
+      "latency_seconds": 5.487,
+      "signal_time": "2026-01-16T11:30:29.944280",
+      "fill_time": "2026-01-16T11:30:35.431063",
+      "entry_price": 0.29,
+      "exit_price": 0.33,
+      "pnl_pct": -13.79,
+      "pnl_dollars": -0.04,
+      "recorded_at": "2026-01-16T11:30:35.902742"
+    },
+    {
+      "trade_id": "SPY_CREDIT_SPREAD_1768582197",
+      "symbol": "SPY",
+      "strategy": "CREDIT_SPREAD",
+      "side": "OPEN",
+      "signal_price": 0.78,
+      "fill_price": 0.78,
+      "slippage": 0.0,
+      "slippage_direction": 0.0,
+      "latency_seconds": 3.072,
+      "signal_time": "2026-01-16T11:49:57.421967",
+      "fill_time": "2026-01-16T11:50:00.494018",
+      "entry_price": null,
+      "exit_price": null,
+      "pnl_pct": null,
+      "pnl_dollars": null,
+      "recorded_at": "2026-01-16T11:50:01.212854"
+    },
+    {
+      "trade_id": "SPY_CREDIT_SPREAD_1768582197",
+      "symbol": "SPY",
+      "strategy": "CREDIT_SPREAD",
+      "side": "CLOSE",
+      "signal_price": 3.49,
+      "fill_price": 3.49,
+      "slippage": 0.0,
+      "slippage_direction": -0.0,
+      "latency_seconds": 5.248,
+      "signal_time": "2026-01-16T11:50:08.176505",
+      "fill_time": "2026-01-16T11:50:13.424111",
+      "entry_price": 0.78,
+      "exit_price": 3.49,
+      "pnl_pct": -347.44,
+      "pnl_dollars": -2.71,
+      "recorded_at": "2026-01-16T11:50:13.756429"
+    },
+    {
+      "trade_id": "IWM_IRON_BUTTERFLY_1768585263",
+      "symbol": "IWM",
+      "strategy": "IRON_BUTTERFLY",
+      "side": "OPEN",
+      "signal_price": 6.92,
+      "fill_price": 6.92,
+      "slippage": 0.0,
+      "slippage_direction": 0.0,
+      "latency_seconds": 92.654,
+      "signal_time": "2026-01-16T12:41:03.742668",
+      "fill_time": "2026-01-16T12:42:36.396454",
+      "entry_price": null,
+      "exit_price": null,
+      "pnl_pct": null,
+      "pnl_dollars": null,
+      "recorded_at": "2026-01-16T12:42:37.343550"
     }
   ],
   "regime_changes": [
@@ -62,6 +152,41 @@
       "timestamp": "2026-01-16T10:22:38.208034",
       "old_regime": "LOW_VOL_CHOP",
       "new_regime": "TRENDING"
+    },
+    {
+      "timestamp": "2026-01-16T11:37:00.222402",
+      "old_regime": "TRENDING",
+      "new_regime": "LOW_VOL_CHOP"
+    },
+    {
+      "timestamp": "2026-01-16T11:47:00.124898",
+      "old_regime": "LOW_VOL_CHOP",
+      "new_regime": "TRENDING"
+    },
+    {
+      "timestamp": "2026-01-16T11:50:00.277398",
+      "old_regime": "TRENDING",
+      "new_regime": "LOW_VOL_CHOP"
+    },
+    {
+      "timestamp": "2026-01-16T11:53:00.040006",
+      "old_regime": "LOW_VOL_CHOP",
+      "new_regime": "TRENDING"
+    },
+    {
+      "timestamp": "2026-01-16T11:54:00.080868",
+      "old_regime": "TRENDING",
+      "new_regime": "LOW_VOL_CHOP"
+    },
+    {
+      "timestamp": "2026-01-16T12:03:00.016686",
+      "old_regime": "LOW_VOL_CHOP",
+      "new_regime": "TRENDING"
+    },
+    {
+      "timestamp": "2026-01-16T12:06:00.067217",
+      "old_regime": "TRENDING",
+      "new_regime": "LOW_VOL_CHOP"
     }
   ],
   "latency_log": [
@@ -76,6 +201,36 @@
       "latency_seconds": 5.527,
       "side": "CLOSE",
       "symbol": "QQQ"
+    },
+    {
+      "timestamp": "2026-01-16T11:30:21.568488",
+      "latency_seconds": 16.311,
+      "side": "OPEN",
+      "symbol": "SPY"
+    },
+    {
+      "timestamp": "2026-01-16T11:30:35.431063",
+      "latency_seconds": 5.487,
+      "side": "CLOSE",
+      "symbol": "SPY"
+    },
+    {
+      "timestamp": "2026-01-16T11:50:00.494018",
+      "latency_seconds": 3.072,
+      "side": "OPEN",
+      "symbol": "SPY"
+    },
+    {
+      "timestamp": "2026-01-16T11:50:13.424111",
+      "latency_seconds": 5.248,
+      "side": "CLOSE",
+      "symbol": "SPY"
+    },
+    {
+      "timestamp": "2026-01-16T12:42:36.396454",
+      "latency_seconds": 92.654,
+      "side": "OPEN",
+      "symbol": "IWM"
     }
   ],
   "errors": []
