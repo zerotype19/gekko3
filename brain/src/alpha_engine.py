@@ -240,11 +240,24 @@ class AlphaEngine:
         else:
             self.candles[symbol] = pd.concat([self.candles[symbol], new_row], ignore_index=True)
 
-        # Trim to lookback window
+        # CRITICAL: Trim to lookback window, but ALWAYS preserve at least 200 candles for SMA-200
+        # This ensures warm-up candles aren't removed prematurely
+        min_candles_for_sma = 200
         cutoff_time = timestamp - timedelta(minutes=self.lookback_minutes)
-        self.candles[symbol] = self.candles[symbol][
+        
+        # First, trim by time
+        trimmed = self.candles[symbol][
             self.candles[symbol]['timestamp'] >= cutoff_time
         ].reset_index(drop=True)
+        
+        # But if that leaves us with less than 200 candles, keep the most recent 200 instead
+        # (This preserves warm-up data even if it's older than lookback_minutes)
+        if len(trimmed) < min_candles_for_sma and len(self.candles[symbol]) >= min_candles_for_sma:
+            # Keep the most recent 200 candles (for SMA calculation)
+            self.candles[symbol] = self.candles[symbol].tail(min_candles_for_sma).reset_index(drop=True)
+        else:
+            # Use time-based trimming (normal case)
+            self.candles[symbol] = trimmed
         
         # Reset RSI state when new bar closes (so it recalculates on next get_rsi call)
         # This ensures RSI updates even if close price is unchanged (gain=0, loss=0)
