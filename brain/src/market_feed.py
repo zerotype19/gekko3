@@ -595,6 +595,36 @@ class MarketFeed:
         for trade_id, pos in list(self.open_positions.items()):
             status = pos.get('status', 'OPEN')
 
+            # --- 0. HANDLE STUCK ORDERS (Orders that can't be cancelled) ---
+            if pos.get('stuck'):
+                # Check if order was filled (stuck orders might fill eventually)
+                order_id = pos.get('entry_order_id') or pos.get('open_order_id')
+                if order_id:
+                    order_status = await self._get_order_status(order_id)
+                    if order_status == 'filled':
+                        logging.info(f"✅ Stuck order {order_id} FILLED! Position {trade_id} opened successfully.")
+                        pos['status'] = 'OPEN'
+                        # Get fill price from order details
+                        order_details = await self._get_order_details(order_id)
+                        if order_details:
+                            avg_fill = order_details.get('avg_fill_price')
+                            if avg_fill:
+                                pos['entry_price'] = float(avg_fill)
+                        # Clear stuck flag
+                        del pos['stuck']
+                        if 'stuck_since' in pos:
+                            del pos['stuck_since']
+                        self._save_positions_to_disk()
+                        continue
+                    elif order_status in ['canceled', 'rejected', 'expired']:
+                        logging.info(f"✅ Stuck order {order_id} {order_status}. Removing position.")
+                        del self.open_positions[trade_id]
+                        self._save_positions_to_disk()
+                        continue
+                    # Still stuck, just continue monitoring
+                    logging.debug(f"⏳ Stuck order {order_id} still pending. Continuing to monitor...")
+                    continue
+
             # --- 1. VERIFY ENTRY (The "Waiting Room") ---
             if status == 'OPENING':
                 order_id = pos.get('open_order_id')
