@@ -218,6 +218,8 @@ class MarketFeed:
                 'strategy': pos.get('strategy', 'UNKNOWN'),
                 'status': pos.get('status', 'OPEN'),  # Default to OPEN if missing (recovered positions)
                 'entry_price': entry_price,
+                'current_value': pos.get('current_value', 0.0),  # Current mark-to-market value
+                'unrealized_pnl_pct': pos.get('unrealized_pnl_pct', 0.0),  # Unrealized P&L percentage
                 'bias': pos.get('bias', 'neutral'),
                 'legs_count': len(pos.get('legs', [])),
                 'timestamp': pos.get('timestamp', '').isoformat() if isinstance(pos.get('timestamp'), datetime) else pos.get('timestamp', ''),
@@ -1232,6 +1234,10 @@ class MarketFeed:
             
             if pnl_pct > pos.get('highest_pnl', -100):
                 pos['highest_pnl'] = pnl_pct
+
+            # Store P&L tracking for dashboard
+            pos['unrealized_pnl_pct'] = pnl_pct
+            pos['current_value'] = cost_to_close
 
             # --- EXIT RULES ---
             should_close = False

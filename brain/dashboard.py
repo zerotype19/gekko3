@@ -196,6 +196,8 @@ with col_main:
             'strategy': 'Strategy',
             'status': 'Status',
             'entry_price': 'Entry',
+            'current_value': 'Mark',  # Current mark-to-market value
+            'unrealized_pnl_pct': 'P&L %',  # Unrealized profit/loss percentage
             'legs_count': 'Legs',
             'timestamp': 'Time'
         }
@@ -220,6 +222,15 @@ with col_main:
         column_config = {}
         if 'Entry' in df_display.columns and df_display['Entry'].notna().any():
             column_config['Entry'] = st.column_config.NumberColumn(format="$%.2f")
+        if 'Mark' in df_display.columns and df_display['Mark'].notna().any():
+            column_config['Mark'] = st.column_config.NumberColumn(format="$%.2f")
+        if 'P&L %' in df_display.columns and df_display['P&L %'].notna().any():
+            column_config['P&L %'] = st.column_config.NumberColumn(
+                format="%.2f%%",
+                help="Unrealized Profit/Loss",
+                min_value=-100,
+                max_value=100,
+            )
         
         st.dataframe(
             df_display, 
