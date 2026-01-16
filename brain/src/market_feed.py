@@ -2729,8 +2729,9 @@ class MarketFeed:
 
         # -----------------------------------------------
         # STRATEGY 2: RANGE FARMER (Upgraded)
-        # PERMISSION: CHOP + STRICT ADX FILTER
+        # PERMISSION: CHOP (VIX 13-25, ADX < 20)
         # -----------------------------------------------
+        # Note: COMPRESSED regime (VIX < 13.5) is excluded - that's for Calendar Spreads
         if not signal and current_regime.value == 'LOW_VOL_CHOP' and current_hour == 13:
             # STRICT FILTER: ADX must be < 20. If > 20, it's a "Grinding Trend", do not farm.
             adx = self.alpha_engine.get_adx(symbol)
