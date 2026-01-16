@@ -506,22 +506,18 @@ class MarketFeed:
                     await asyncio.sleep(30)
                     continue
                 
-                # Periodic Full Sync: Every 5 minutes, sync with Tradier
-                # This ensures Brain's state matches broker reality
-                # INCREASED FREQUENCY: 10 min -> 5 min to catch position changes faster
-                if (datetime.now() - last_sync).total_seconds() >= 300:  # 5 minutes
-                    # Sweep stale closing orders before sync to prevent rejection loops
-                    await self._sweep_stale_orders()
-                    await self.sync_positions_with_tradier()
+                # Periodic Full Reconciliation: Every 2-3 minutes, run full startup reconciliation
+                # This uses the same comprehensive logic as startup (works very well)
+                # - Sweeps stale closing orders
+                # - Adopts orphans (positions in Tradier but not Brain)
+                # - Removes ghosts (positions in Brain but not Tradier)
+                # - Updates quantities for mismatches
+                # - Handles unbalanced positions
+                # This is more comprehensive than the old sync_positions_with_tradier() + _reconcile_fills()
+                if (datetime.now() - last_sync).total_seconds() >= 180:  # 3 minutes (2-5 min range)
+                    logging.info("🔄 Periodic reconciliation: Running full startup reconciliation routine...")
+                    await self.reconcile_state()
                     last_sync = datetime.now()
-                
-                # CRITICAL: Lightweight fill reconciliation every 2 minutes
-                # This catches fills that were missed by order status checks
-                # (e.g., if Brain restarted before detecting fill, or order_id was lost)
-                # INCREASED FREQUENCY: 5 min -> 2 min to catch fills faster
-                if (datetime.now() - last_reconcile).total_seconds() >= 120:  # 2 minutes
-                    await self._reconcile_fills()
-                    last_reconcile = datetime.now()
                     
             except Exception as e:
                 logging.error(f"⚠️ Manager Error: {e}")
