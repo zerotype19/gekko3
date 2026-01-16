@@ -680,6 +680,20 @@ export class GatekeeperDO {
       // If approved, execute trade
       try {
         let orderResult;
+        
+        // CRITICAL FIX: Declare orderType at function scope so it's available for alert code
+        // Order Type Logic:
+        // - Allow Brain to specify type (e.g., 'market' for emergency exits)
+        // - Default based on side if not specified
+        // - 'market' = unlimited slippage (use only for illiquid positions)
+        // - 'credit'/'debit' = limit order with price protection (default)
+        let orderType = proposal.type; // Allow Brain to specify type
+        if (!orderType) {
+          // Default behavior: credit for opening, debit for closing
+          orderType = proposal.side === 'OPEN' 
+            ? 'credit'  // Opening: credit spreads (selling premium)
+            : 'debit';  // Closing: debit limit (buying back, max price protection)
+        }
 
         // Supported Strategies for Auto-Execution (OPEN only)
         // CLOSE proposals can use any strategy (we're just closing existing positions)
@@ -708,20 +722,6 @@ export class GatekeeperDO {
               // Closing: SELL->buy_to_close, BUY->sell_to_close
               sides.push(leg.side === 'SELL' ? 'buy_to_close' : 'sell_to_close');
             }
-          }
-
-          // Order Type Logic
-          // Order Type Logic:
-          // - Allow Brain to specify type (e.g., 'market' for emergency exits)
-          // - Default based on side if not specified
-          // - 'market' = unlimited slippage (use only for illiquid positions)
-          // - 'credit'/'debit' = limit order with price protection (default)
-          let orderType = proposal.type; // Allow Brain to specify type
-          if (!orderType) {
-            // Default behavior: credit for opening, debit for closing
-            orderType = proposal.side === 'OPEN' 
-              ? 'credit'  // Opening: credit spreads (selling premium)
-              : 'debit';  // Closing: debit limit (buying back, max price protection)
           }
 
           // Build order payload
