@@ -592,7 +592,9 @@ class AlphaEngine:
             'volume_velocity': flow_metadata['volume_velocity'],
             'sma_200': sma,  # None if < 200 candles
             'candle_count': flow_metadata['candle_count'],
-            'is_warm': sma is not None and vix is not None,  # Warmup status
+            'is_warm': sma is not None,  # Warmup status: Ready if we have 200+ candles for SMA
+            # Note: VIX is for regime detection (separate from trend), so we don't require it for "warm"
+            # Trend calculation only needs 200 candles, which warm-up provides
             'poc': volume_profile['poc'],  # Point of Control (highest volume price)
             'vah': volume_profile['vah'],  # Value Area High
             'val': volume_profile['val']   # Value Area Low
