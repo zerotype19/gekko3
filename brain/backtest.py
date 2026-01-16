@@ -52,12 +52,18 @@ class BacktestTrade:
             self.bias = 'BULLISH'
         elif 'BEAR' in str(signal):
             self.bias = 'BEARISH'
+        elif 'RATIO' in str(strategy) or 'SKEW' in str(signal):
+            # Ratio Spreads are bearish hedges (profit on crashes)
+            self.bias = 'BEARISH_HEDGE'
         
         # Set DTE based on Strategy (CRITICAL FIX)
         # Scalper/ORB = 0DTE (Binary Outcome - expires same day)
-        # Trend/Farmer = 30 DTE (Partial Decay - only capture 1 day worth of theta)
+        # Trend/Farmer/Calendar = 30-60 DTE (Partial Decay - only capture 1 day worth of theta)
         if 'SCALP' in str(strategy) or 'ORB' in str(strategy):
             self.target_dte = 0
+        elif 'CALENDAR' in str(strategy) or 'BEAST' in str(signal):
+            # Calendar Spreads: Long-term structure (front ~30 DTE, back ~60 DTE)
+            self.target_dte = 45  # Average DTE for calendar
         else:
             self.target_dte = 30
 
@@ -126,15 +132,74 @@ class BacktestTrade:
                 # Moves away from center are bad (spread worth more)
                 delta_pnl = -abs(price_diff) * 100 * net_delta * self.size
 
-            # Combine Theta + Delta for estimated P&L
-            estimated_pnl_per_contract = theta_gain + (delta_pnl / self.size if self.size > 0 else 0)
-            estimated_pnl = estimated_pnl_per_contract * self.size
+            # --- CALENDAR SPREAD LOGIC (Long Vega, Long Theta, Negative Gamma) ---
+            if 'CALENDAR' in str(self.strategy) or 'BEAST' in str(self.signal):
+                # Calendar Spread: Buy volatility (Long Vega), Long Theta
+                # Entry: Typically a debit ($100-$200 per spread)
+                debit_paid = 150.0  # Estimated debit per spread
+                
+                # 1. Price Move Impact (Negative Gamma) - Lose money if price moves away from strike
+                price_move_pct = abs(pct_change)
+                direction_loss = 0.0
+                if price_move_pct > 0.01:  # Moved > 1% away from strike
+                    # Lose more as price moves further (gamma risk)
+                    direction_loss = (price_move_pct - 0.01) * debit_paid * self.size * 2.0
+                
+                # 2. Volatility Impact (Vega) - Profit from IV expansion
+                # We entered when VIX was low (<15), profit if IV normalizes/higher
+                # Assume small positive drift in IV (backtest assumption)
+                vol_profit = 50.0 * self.size  # Base profit for "buying low vol"
+                
+                # 3. Theta (Time) - Make money every day we hold (time decay on short leg > long leg)
+                days_held = max(0.5, days_held)  # Reuse calculated days_held
+                theta_profit = 20.0 * days_held * self.size  # ~$20 per day theta decay
+                
+                estimated_pnl = vol_profit + theta_profit - direction_loss
+                
+                # Cap profit at reasonable % of debit (e.g., 50% max return usually)
+                # Cap loss at debit paid
+                max_risk = debit_paid * self.size
+                self.pnl = max(-max_risk, min(max_risk * 0.5, estimated_pnl))
             
-            # Cap at realistic limits
-            # Can't lose more than max loss, can't gain more than full credit in one day
-            # (Can't exceed ~3 days worth of theta in a single day)
-            max_daily_gain = (max_profit / self.target_dte) * 3  # Cap at 3 days of theta
-            self.pnl = max(-max_loss * self.size, min(max_daily_gain * self.size, estimated_pnl))
+            # --- RATIO SPREAD LOGIC (Skew Trade - Asymmetric Risk/Reward) ---
+            elif 'RATIO' in str(self.strategy) or 'SKEW' in str(self.signal):
+                # Ratio Backspread: Sell 1 ATM, Buy 2 OTM (typically Put Ratio for Skew)
+                # Net Credit or small Debit
+                credit_received = 50.0  # Estimated credit per spread
+                
+                if self.bias == 'BEARISH_HEDGE':
+                    # PUT Ratio: Sell 1 ATM Put, Buy 2 OTM Puts
+                    if pct_change < -0.05:  # CRASH! Massive Profit (Gamma)
+                        # OTM puts print massively on crash
+                        profit_factor = abs(pct_change) * 10  # Exponential profit on big moves
+                        self.pnl = min(1000.0 * self.size, credit_received * self.size * profit_factor)
+                    elif pct_change > 0:
+                        # Rally: Short ATM Put expires worthless, keep credit or lose small debit
+                        self.pnl = credit_received * self.size * 0.8  # Keep most of credit
+                    else:
+                        # Slow bleed down (The Trap) - Loss peaks at OTM strike
+                        # Price hangs near short strike = worst case
+                        loss_factor = abs(pct_change) / 0.05  # Scale loss from 0 to -100% of credit
+                        self.pnl = -credit_received * self.size * loss_factor * 2.0
+                else:
+                    # Standard Ratio Spread logic (if not hedge)
+                    if abs(pct_change) < 0.01:
+                        self.pnl = credit_received * self.size
+                    else:
+                        loss_factor = min((abs(pct_change) - 0.01) / 0.04, 1.0)
+                        self.pnl = -(credit_received * self.size * 3.0) * loss_factor  # Larger max loss for ratios
+            
+            # --- STANDARD CREDIT SPREAD / IRON CONDOR LOGIC ---
+            else:
+                # Combine Theta + Delta for estimated P&L
+                estimated_pnl_per_contract = theta_gain + (delta_pnl / self.size if self.size > 0 else 0)
+                estimated_pnl = estimated_pnl_per_contract * self.size
+                
+                # Cap at realistic limits
+                # Can't lose more than max loss, can't gain more than full credit in one day
+                # (Can't exceed ~3 days worth of theta in a single day)
+                max_daily_gain = (max_profit / self.target_dte) * 3  # Cap at 3 days of theta
+                self.pnl = max(-max_loss * self.size, min(max_daily_gain * self.size, estimated_pnl))
 
         # ROI calculation on margin used
         margin_used = self.spread_width * 100 * self.size
