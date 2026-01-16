@@ -9,6 +9,7 @@ Includes: Order Verification & Retry Logic
 import asyncio
 import json
 import websockets
+from websockets.exceptions import ConnectionClosed, ConnectionClosedOK, ConnectionClosedError
 import aiohttp
 import logging
 import os
@@ -2562,8 +2563,19 @@ class MarketFeed:
                     self.is_connected = True
                     await self._subscribe(session_id)
                     await self.run(websocket)
+            except (ConnectionClosed, ConnectionClosedOK, ConnectionClosedError) as ws_error:
+                # WebSocket connection closed - normal, will reconnect
+                logging.info(f"🔌 WebSocket connection closed during connect: {ws_error.code if hasattr(ws_error, 'code') else 'unknown'}. Reconnecting...")
+                self.connected = False
+                self.is_connected = False
+                await asyncio.sleep(5)
             except Exception as e:
-                logging.error(f"WS Error: {e}")
+                # Other unexpected errors
+                logging.error(f"WS Connection Error: {e}")
+                import traceback
+                traceback.print_exc()
+                self.connected = False
+                self.is_connected = False
                 await asyncio.sleep(5)
 
     async def _subscribe(self, session_id: str):
@@ -2579,9 +2591,19 @@ class MarketFeed:
                     break
                 data = json.loads(message)
                 await self._handle_message(data)
-        except Exception as e:
-            logging.error(f"Run loop error: {e}")
+        except (ConnectionClosed, ConnectionClosedOK, ConnectionClosedError) as ws_error:
+            # WebSocket closed normally or due to network issues - expected behavior
+            # This is not an error, just reconnect
+            logging.info(f"🔌 WebSocket connection closed: {ws_error.code if hasattr(ws_error, 'code') else 'unknown'}. Will reconnect...")
             self.connected = False
+            self.is_connected = False
+        except Exception as e:
+            # Other unexpected errors - log as error
+            logging.error(f"Run loop error: {e}")
+            import traceback
+            traceback.print_exc()
+            self.connected = False
+            self.is_connected = False
 
     async def disconnect(self):
         self.stop_signal = True
