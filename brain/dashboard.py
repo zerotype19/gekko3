@@ -254,6 +254,138 @@ for symbol, metrics in market_data.items():
             else:
                 st.info("Building Volume Profile...")
 
+# --- SECTION 3: PILOT SCORECARD (Execution Quality) ---
+st.markdown("---")
+st.markdown("### ✈️ Pilot Scorecard")
+
+# Load Pilot Data
+pilot_file = 'pilot_stats.json'
+pilot_stats = {
+    'total_trades': 0,
+    'avg_slippage': 0.0,
+    'avg_latency': 0.0,
+    'win_rate': 0.0,
+    'regime_changes_24h': 0,
+    'closed_trades_count': 0
+}
+pilot_trades = []
+pilot_latency_log = []
+
+if os.path.exists(pilot_file):
+    try:
+        with open(pilot_file, 'r') as f:
+            pilot_data = json.load(f)
+            # Calculate stats
+            trades = pilot_data.get('trades', [])
+            regime_changes = pilot_data.get('regime_changes', [])
+            
+            if trades:
+                pilot_stats['total_trades'] = len(trades)
+                pilot_stats['avg_slippage'] = sum(t.get('slippage', 0) for t in trades) / len(trades)
+                pilot_stats['avg_latency'] = sum(t.get('latency_seconds', 0) for t in trades) / len(trades)
+                
+                # Win rate (for closed trades with P&L)
+                closed_trades_with_pnl = [t for t in trades if t.get('side') == 'CLOSE' and t.get('pnl_pct') is not None]
+                pilot_stats['closed_trades_count'] = len(closed_trades_with_pnl)
+                if closed_trades_with_pnl:
+                    wins = sum(1 for t in closed_trades_with_pnl if t.get('pnl_pct', 0) > 0)
+                    pilot_stats['win_rate'] = (wins / len(closed_trades_with_pnl)) * 100
+                
+                # Get recent trades for charts
+                pilot_trades = sorted(trades, key=lambda x: x.get('fill_time', ''), reverse=True)[:100]
+                pilot_latency_log = pilot_data.get('latency_log', [])[-100:]
+            
+            # Count regime changes in last 24 hours
+            now = datetime.now()
+            pilot_stats['regime_changes_24h'] = sum(
+                1 for rc in regime_changes
+                if (now - datetime.fromisoformat(rc['timestamp'])).total_seconds() < 86400
+            )
+    except Exception as e:
+        st.warning(f"⚠️ Could not load pilot stats: {e}")
+
+# Key Metrics Row
+p1, p2, p3, p4 = st.columns(4)
+
+with p1:
+    total_trades = pilot_stats['total_trades']
+    st.metric("Trades Executed", f"{total_trades}")
+
+with p2:
+    avg_slippage = pilot_stats['avg_slippage']
+    slippage_color = "normal" if avg_slippage <= 0.05 else "inverse"
+    st.metric("Avg Slippage", f"${avg_slippage:.4f}", help="Price difference between signal and fill", delta=None if avg_slippage <= 0.05 else "⚠️ High")
+
+with p3:
+    avg_latency = pilot_stats['avg_latency']
+    latency_color = "normal" if avg_latency <= 5.0 else "inverse"
+    st.metric("Avg Latency", f"{avg_latency:.3f}s", help="Time from signal to fill", delta=None if avg_latency <= 5.0 else "⚠️ Slow")
+
+with p4:
+    regime_changes = pilot_stats['regime_changes_24h']
+    st.metric("Regime Changes (24h)", f"{regime_changes}", help="Market regime switches in last 24 hours")
+
+# Charts Row
+if pilot_trades:
+    c1, c2 = st.columns(2)
+    
+    with c1:
+        # Execution Quality Chart (Slippage Histogram)
+        slippage_data = [t.get('slippage_direction', 0) for t in pilot_trades if t.get('slippage_direction') is not None]
+        if slippage_data:
+            fig_slippage = go.Figure()
+            fig_slippage.add_trace(go.Histogram(
+                x=slippage_data,
+                nbinsx=30,
+                name="Slippage",
+                marker_color='rgba(59, 130, 246, 0.7)'
+            ))
+            fig_slippage.add_vline(x=0, line_dash="dash", line_color="green", annotation_text="Perfect Fill")
+            fig_slippage.update_layout(
+                title="Execution Quality (Slippage Distribution)",
+                xaxis_title="Slippage Direction (Positive = Bad, Negative = Good)",
+                yaxis_title="Frequency",
+                height=300,
+                margin=dict(l=20,r=20,t=40,b=20)
+            )
+            st.plotly_chart(fig_slippage, use_container_width=True, key="slippage_chart", config={'displayModeBar': False})
+    
+    with c2:
+        # Latency Timeline
+        if pilot_latency_log:
+            latency_data = [{
+                'time': datetime.fromisoformat(log['timestamp']),
+                'latency': log['latency_seconds']
+            } for log in pilot_latency_log if log.get('timestamp') and log.get('latency_seconds') is not None]
+            
+            if latency_data:
+                fig_latency = go.Figure()
+                fig_latency.add_trace(go.Scatter(
+                    x=[d['time'] for d in latency_data],
+                    y=[d['latency'] for d in latency_data],
+                    mode='markers+lines',
+                    name='Latency',
+                    marker=dict(color='rgba(236, 72, 153, 0.7)', size=6),
+                    line=dict(color='rgba(236, 72, 153, 0.5)', width=1)
+                ))
+                fig_latency.add_hline(y=5.0, line_dash="dash", line_color="red", annotation_text="5s Threshold")
+                fig_latency.update_layout(
+                    title="Latency Timeline",
+                    xaxis_title="Time",
+                    yaxis_title="Latency (seconds)",
+                    height=300,
+                    margin=dict(l=20,r=20,t=40,b=20)
+                )
+                st.plotly_chart(fig_latency, use_container_width=True, key="latency_chart", config={'displayModeBar': False})
+        
+        # Win Rate (if available)
+        if pilot_stats['closed_trades_count'] > 0:
+            win_rate = pilot_stats['win_rate']
+            win_color = "green" if win_rate >= 50 else "red"
+            st.markdown(f"**Win Rate:** <span style='color:{win_color}'>{win_rate:.1f}%</span> ({pilot_stats['closed_trades_count']} closed trades)", unsafe_allow_html=True)
+else:
+    st.info("📊 No pilot data yet. Trades will populate here automatically.")
+
 # Footer
 if auto_refresh:
     time.sleep(refresh_interval)

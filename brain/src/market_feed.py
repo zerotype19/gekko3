@@ -21,6 +21,7 @@ from src.alpha_engine import AlphaEngine
 from src.gatekeeper_client import GatekeeperClient
 from src.notifier import get_notifier
 from src.position_sizer import PositionSizer
+from src.pilot_recorder import PilotRecorder
 
 # Load environment variables
 load_dotenv()
@@ -96,6 +97,10 @@ class MarketFeed:
         
         # Position Sizing (Professional Grade)
         self.position_sizer = PositionSizer()
+        
+        # Pilot Recorder (Structured Data Capture)
+        self.pilot_recorder = PilotRecorder()
+        self.last_regime = None  # Track regime changes for pilot recording
         
         # Dashboard state export
         current_dir = os.getcwd()
@@ -339,6 +344,40 @@ class MarketFeed:
         
         return 100000.0  # Safe fallback so we don't crash
 
+    async def _get_order_details(self, order_id: str) -> Optional[Dict]:
+        """
+        Get full order details from Tradier (uses SANDBOX API where orders are executed)
+        Returns: Full order dictionary with status, avg_fill_price, etc., or None on error
+        """
+        if not self.account_id: 
+            await self._fetch_account_id()
+        if not self.account_id: 
+            return None
+        
+        # Use SANDBOX API for order status (Gatekeeper executes orders in sandbox)
+        sandbox_api_base = "https://sandbox.tradier.com/v1"
+        headers = {'Authorization': f'Bearer {self.sandbox_token}', 'Accept': 'application/json'}
+        url = f"{sandbox_api_base}/accounts/{self.account_id}/orders/{order_id}"
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        order_data = data.get('order', {})
+                        if order_data:
+                            return order_data
+                    elif resp.status == 404:
+                        logging.debug(f"Order {order_id} not found (may be old or invalid)")
+                        return None
+                    else:
+                        error_text = await resp.text()
+                        logging.warning(f"⚠️ Failed to get order details for {order_id}: {resp.status} - {error_text[:200]}")
+                        return None
+        except Exception as e:
+            logging.error(f"❌ Error fetching order details for {order_id}: {e}")
+            return None
+    
     async def _get_order_status(self, order_id: str) -> Optional[str]:
         """
         Get order status from Tradier (uses SANDBOX API where orders are executed)
@@ -576,6 +615,35 @@ class MarketFeed:
                 
                 if order_status == 'filled':
                     logging.info(f"✅ ENTRY FILLED for {trade_id}. Tracking active position.")
+                    
+                    # Pilot Data: Capture fill data for execution audit
+                    fill_time = now
+                    signal_price = pos.get('signal_price', pos.get('entry_price', 0))
+                    signal_timestamp = pos.get('signal_timestamp', pos.get('opening_timestamp', now))
+                    
+                    # Get full order details to extract fill price
+                    order_details = await self._get_order_details(order_id)
+                    fill_price = signal_price  # Fallback to signal price if details unavailable
+                    if order_details:
+                        # Try to extract avg_fill_price from order details
+                        # Tradier may return this as 'price' or 'avg_fill_price' or in 'legs'
+                        fill_price = order_details.get('price') or order_details.get('avg_fill_price') or signal_price
+                    
+                    # Record OPEN trade execution
+                    try:
+                        self.pilot_recorder.record_trade(
+                            symbol=pos['symbol'],
+                            strategy=pos['strategy'],
+                            side='OPEN',
+                            signal_price=signal_price,
+                            fill_price=fill_price,
+                            signal_time=signal_timestamp,
+                            fill_time=fill_time,
+                            trade_id=trade_id
+                        )
+                    except Exception as e:
+                        logging.error(f"❌ Failed to record pilot data for {trade_id}: {e}")
+                    
                     pos['status'] = 'OPEN'
                     pos['timestamp'] = now  # Reset timer to fill time
                     # Initialize live_greeks - will be calculated on next _manage_positions cycle
@@ -721,6 +789,50 @@ class MarketFeed:
                 
                 if order_status == 'filled':
                     logging.info(f"✅ ORDER FILLED for {trade_id}. Position Closed.")
+                    
+                    # Pilot Data: Capture exit fill data BEFORE deleting position
+                    fill_time = now
+                    signal_price = pos.get('close_limit_price', pos.get('entry_price', 0))
+                    signal_timestamp = pos.get('closing_timestamp', now)
+                    entry_price = pos.get('entry_price', 0)
+                    
+                    # Get full order details to extract fill price
+                    order_details = await self._get_order_details(order_id)
+                    fill_price = signal_price  # Fallback to signal price if details unavailable
+                    if order_details:
+                        # Try to extract avg_fill_price from order details
+                        fill_price = order_details.get('price') or order_details.get('avg_fill_price') or signal_price
+                    
+                    # Calculate realized P&L (exit_price would be fill_price for CLOSE)
+                    exit_price = fill_price
+                    pnl_pct = None
+                    pnl_dollars = None
+                    if entry_price > 0:
+                        # For credit spreads: entry_price is credit received, exit_price is debit paid
+                        # P&L = entry_credit - exit_debit (positive = profit)
+                        pnl_dollars = entry_price - exit_price
+                        pnl_pct = ((entry_price - exit_price) / entry_price) * 100 if entry_price > 0 else 0
+                    
+                    # Record CLOSE trade execution
+                    try:
+                        self.pilot_recorder.record_trade(
+                            symbol=pos['symbol'],
+                            strategy=pos['strategy'],
+                            side='CLOSE',
+                            signal_price=signal_price,
+                            fill_price=fill_price,
+                            signal_time=signal_timestamp,
+                            fill_time=fill_time,
+                            entry_price=entry_price,
+                            exit_price=exit_price,
+                            pnl_pct=pnl_pct,
+                            pnl_dollars=pnl_dollars,
+                            trade_id=trade_id
+                        )
+                    except Exception as e:
+                        logging.error(f"❌ Failed to record pilot data for {trade_id}: {e}")
+                    
+                    # Now delete the position (after recording data)
                     del self.open_positions[trade_id]
                     self._save_positions_to_disk()
                     continue
@@ -2198,6 +2310,16 @@ class MarketFeed:
         # We use SPY as the global proxy for the market state
         current_regime = self.regime_engine.get_regime('SPY')
         
+        # Pilot Data: Monitor regime changes
+        if self.last_regime is None:
+            self.last_regime = current_regime.value
+        elif current_regime.value != self.last_regime:
+            try:
+                self.pilot_recorder.record_regime_change(self.last_regime, current_regime.value)
+            except Exception as e:
+                logging.error(f"❌ Failed to record regime change: {e}")
+            self.last_regime = current_regime.value
+        
         indicators = self.alpha_engine.get_indicators(symbol)
         
         # Signal Setup
@@ -2864,17 +2986,21 @@ class MarketFeed:
             trade_id = f"{symbol}_{strategy}_{int(datetime.now().timestamp())}"
             
             if order_id:
+                signal_time = datetime.now()
                 self.open_positions[trade_id] = {
                     'symbol': symbol,
                     'strategy': strategy,
                     'status': 'OPENING',  # WAIT FOR FILL!
                     'open_order_id': str(order_id),
-                    'opening_timestamp': datetime.now(),
+                    'opening_timestamp': signal_time,
                     'legs': proposal['legs'],  # Contains the specific option symbols
                     'entry_price': proposal['price'],
                     'bias': bias,
-                    'timestamp': datetime.now(),
-                    'highest_pnl': -100.0  # Initialize for Trailing Stop tracking
+                    'timestamp': signal_time,
+                    'highest_pnl': -100.0,  # Initialize for Trailing Stop tracking
+                    # Pilot Data: Store signal data for execution audit
+                    'signal_price': proposal['price'],
+                    'signal_timestamp': signal_time
                 }
                 logging.info(f"📝 Proposal Approved: {trade_id}. Waiting for Entry Fill (Order {order_id})...")
                 self._save_positions_to_disk()
@@ -3029,17 +3155,21 @@ class MarketFeed:
             trade_id = f"{symbol}_{strategy}_{int(datetime.now().timestamp())}"
             
             if order_id:
+                signal_time = datetime.now()
                 self.open_positions[trade_id] = {
                     'symbol': symbol,
                     'strategy': strategy,
                     'status': 'OPENING',  # WAIT FOR FILL!
                     'open_order_id': str(order_id),
-                    'opening_timestamp': datetime.now(),
+                    'opening_timestamp': signal_time,
                     'legs': updated_legs,  # Use updated legs with dynamic quantities
                     'entry_price': round(limit_price, 2),
                     'bias': bias,
-                    'timestamp': datetime.now(),
-                    'highest_pnl': -100.0
+                    'timestamp': signal_time,
+                    'highest_pnl': -100.0,
+                    # Pilot Data: Store signal data for execution audit
+                    'signal_price': round(limit_price, 2),
+                    'signal_timestamp': signal_time
                 }
                 logging.info(f"📝 Complex Proposal Approved: {trade_id}. Waiting for Entry Fill (Order {order_id})...")
                 self._save_positions_to_disk()
