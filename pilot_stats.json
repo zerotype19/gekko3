@@ -1,12 +1,67 @@
 {
-  "trades": [],
+  "trades": [
+    {
+      "trade_id": "SPY_CREDIT_SPREAD_RECOVERED_1768575827",
+      "symbol": "SPY",
+      "strategy": "CREDIT_SPREAD",
+      "side": "CLOSE",
+      "signal_price": 0.355,
+      "fill_price": 0.36,
+      "slippage": 0.005,
+      "slippage_direction": -0.005,
+      "latency_seconds": 6.754,
+      "signal_time": "2026-01-16T10:04:02.125793",
+      "fill_time": "2026-01-16T10:04:08.879804",
+      "entry_price": 33.0,
+      "exit_price": 0.36,
+      "pnl_pct": 98.91,
+      "pnl_dollars": 32.64,
+      "recorded_at": "2026-01-16T10:04:09.186099"
+    },
+    {
+      "trade_id": "QQQ_CREDIT_SPREAD_RECOVERED_1768575827",
+      "symbol": "QQQ",
+      "strategy": "CREDIT_SPREAD",
+      "side": "CLOSE",
+      "signal_price": 1.1,
+      "fill_price": 1.1,
+      "slippage": 0.0,
+      "slippage_direction": -0.0,
+      "latency_seconds": 5.527,
+      "signal_time": "2026-01-16T10:04:03.353116",
+      "fill_time": "2026-01-16T10:04:08.879804",
+      "entry_price": 101.0,
+      "exit_price": 1.1,
+      "pnl_pct": 98.91,
+      "pnl_dollars": 99.9,
+      "recorded_at": "2026-01-16T10:04:09.828539"
+    }
+  ],
   "regime_changes": [
     {
       "timestamp": "2026-01-16T09:53:00.109770",
       "old_regime": "LOW_VOL_CHOP",
       "new_regime": "TRENDING"
+    },
+    {
+      "timestamp": "2026-01-16T10:11:00.123651",
+      "old_regime": "LOW_VOL_CHOP",
+      "new_regime": "TRENDING"
     }
   ],
-  "latency_log": [],
+  "latency_log": [
+    {
+      "timestamp": "2026-01-16T10:04:08.879804",
+      "latency_seconds": 6.754,
+      "side": "CLOSE",
+      "symbol": "SPY"
+    },
+    {
+      "timestamp": "2026-01-16T10:04:08.879804",
+      "latency_seconds": 5.527,
+      "side": "CLOSE",
+      "symbol": "QQQ"
+    }
+  ],
   "errors": []
 }
