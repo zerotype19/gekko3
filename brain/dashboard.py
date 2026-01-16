@@ -190,23 +190,34 @@ with col_main:
         # Brain doesn't stream live P&L yet, but we have entry prices.
         # We can calculate estimated P&L using current market data if available.
         
+        # Define columns we want to display (check if they exist first)
         display_cols = ['symbol', 'strategy', 'status', 'entry_price', 'legs_count', 'timestamp']
-        # Rename columns
-        df_pos = df_pos.rename(columns={
+        # Filter to only columns that exist in the DataFrame
+        available_cols = [col for col in display_cols if col in df_pos.columns]
+        
+        # Select only available columns before renaming
+        df_pos = df_pos[available_cols].copy()
+        
+        # Rename columns for display
+        rename_map = {
             'symbol': 'Symbol', 'strategy': 'Strategy', 'status': 'Status',
             'entry_price': 'Entry', 'legs_count': 'Legs', 'timestamp': 'Time'
-        })
+        }
+        # Only rename columns that exist
+        rename_map = {k: v for k, v in rename_map.items() if k in df_pos.columns}
+        df_pos = df_pos.rename(columns=rename_map)
         
-        # Format Time
-        df_pos['Time'] = pd.to_datetime(df_pos['Time']).dt.strftime('%H:%M:%S')
+        # Format Time if it exists
+        if 'Time' in df_pos.columns:
+            df_pos['Time'] = pd.to_datetime(df_pos['Time'], errors='coerce').dt.strftime('%H:%M:%S')
         
         st.dataframe(
-            df_pos[display_cols], 
+            df_pos, 
             use_container_width=True,
             hide_index=True,
             column_config={
                 "Entry": st.column_config.NumberColumn(format="$%.2f"),
-            }
+            } if "Entry" in df_pos.columns else {}
         )
     else:
         st.info("📭 No active positions. Waiting for signals...")
