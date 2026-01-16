@@ -681,6 +681,46 @@ class MarketFeed:
                         # Tradier may return this as 'price' or 'avg_fill_price' or in 'legs'
                         fill_price = order_details.get('price') or order_details.get('avg_fill_price') or signal_price
                     
+                    # Calculate latency (time from signal to fill)
+                    if signal_timestamp:
+                        if isinstance(signal_timestamp, str):
+                            signal_timestamp = datetime.fromisoformat(signal_timestamp)
+                        latency_seconds = (fill_time - signal_timestamp).total_seconds()
+                    else:
+                        latency_seconds = 0
+                    
+                    # CRITICAL: Send Discord notification when order ACTUALLY FILLS (not just when approved)
+                    try:
+                        from src.notifier import get_notifier
+                        notifier = get_notifier()
+                        symbol = pos.get('symbol', 'UNKNOWN')
+                        strategy = pos.get('strategy', 'UNKNOWN')
+                        qty = pos.get('quantity', 1)
+                        
+                        # Calculate slippage if we have both signal and fill prices
+                        slippage_info = ""
+                        if signal_price and fill_price and signal_price > 0:
+                            slippage_pct = ((fill_price - signal_price) / signal_price) * 100
+                            slippage_info = f" | Slippage: {slippage_pct:+.2f}%"
+                        
+                        await notifier.send(
+                            f"**{symbol}** {strategy} **FILLED**\n"
+                            f"Order ID: `{order_id}`\n"
+                            f"Quantity: {qty} | Fill Price: ${fill_price:.2f}{slippage_info}\n"
+                            f"Latency: {latency_seconds:.1f}s",
+                            color=0x00FF00,  # Green
+                            title="✅ Order Filled",
+                            fields=[
+                                {'name': 'Symbol', 'value': symbol, 'inline': True},
+                                {'name': 'Strategy', 'value': strategy, 'inline': True},
+                                {'name': 'Quantity', 'value': str(qty), 'inline': True},
+                                {'name': 'Fill Price', 'value': f'${fill_price:.2f}', 'inline': True},
+                                {'name': 'Order ID', 'value': str(order_id), 'inline': False}
+                            ]
+                        )
+                    except Exception as e:
+                        logging.error(f"❌ Failed to send fill notification for {trade_id}: {e}")
+                    
                     # Record OPEN trade execution
                     try:
                         self.pilot_recorder.record_trade(
@@ -721,6 +761,25 @@ class MarketFeed:
                     self._save_positions_to_disk()
                 
                 elif order_status in ['pending', 'open', 'partially_filled']:
+                    # Periodic logging for pending orders (every 30 seconds) for visibility
+                    sent_time = pos.get('opening_timestamp')
+                    if sent_time:
+                        # Handle string datetime (from JSON)
+                        if isinstance(sent_time, str):
+                            try:
+                                sent_time = datetime.fromisoformat(sent_time)
+                            except (ValueError, TypeError):
+                                sent_time = None
+                        
+                        if sent_time and isinstance(sent_time, datetime):
+                            elapsed_seconds = (now - sent_time).total_seconds()
+                            # Log every 30 seconds for visibility
+                            last_log_time = pos.get('last_pending_log_time')
+                            if not last_log_time or (now - datetime.fromisoformat(last_log_time) if isinstance(last_log_time, str) else (now - last_log_time if isinstance(last_log_time, datetime) else timedelta(seconds=999))).total_seconds() >= 30:
+                                logging.info(f"⏳ PENDING ORDER: {trade_id} (Order {order_id}) - Pending for {elapsed_seconds:.0f}s | Status: {order_status}")
+                                pos['last_pending_log_time'] = now.isoformat()
+                                self._save_positions_to_disk()
+                    
                     # Check timeout (2 minutes - faster retry for opening orders)
                     sent_time = pos.get('opening_timestamp')
                     if sent_time:
