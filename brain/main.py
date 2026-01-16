@@ -153,6 +153,55 @@ class BrainSupervisor:
                         pass
                     logging.debug(f"Heartbeat failed (non-critical): {e}")
             
+            # CRITICAL: Daily initialization at 9:30 AM ET on trading days
+            # Runs the same sequence as restart: warm-up, sync, order sweep
+            # This ensures fresh state even if Brain ran all night
+            now = datetime.now(self.tz)
+            current_date = now.date()
+            current_time = now.time()
+            
+            # Check if it's 9:30-9:31 AM ET on a trading day and we haven't run today
+            is_trading_day = now.weekday() < 5  # Monday-Friday
+            is_init_window = self.daily_init_time <= current_time < time(9, 32)  # 9:30-9:31 AM
+            needs_daily_init = (is_trading_day and is_init_window and 
+                              self.last_daily_init_date != current_date)
+            
+            if needs_daily_init:
+                logging.info("🌅 DAILY INITIALIZATION: Running startup sequence at 9:30 AM ET...")
+                self.last_daily_init_date = current_date
+                
+                try:
+                    # Run the same sequence as restart:
+                    # 1. Warm-up historical candles (instant indicator readiness)
+                    logging.info("🔥 Warming up historical candles...")
+                    await self.market_feed.warm_up_history()
+                    
+                    # 2. Full reconciliation (order sweep + position sync + orphan adoption)
+                    logging.info("🔄 Running full position reconciliation...")
+                    await self.market_feed.reconcile_state()
+                    
+                    logging.info("✅ Daily initialization complete!")
+                    
+                    # Notify completion
+                    await self.notifier.send_success(
+                        f"🌅 **Daily Initialization Complete**\n\n"
+                        f"Time: {now.strftime('%H:%M:%S %Z')}\n"
+                        f"✅ Historical candles warmed up\n"
+                        f"✅ Position reconciliation complete\n"
+                        f"✅ Order sweep completed",
+                        title="Daily Startup"
+                    )
+                except Exception as e:
+                    logging.error(f"❌ Daily initialization failed: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    await self.notifier.send_error(
+                        f"❌ **Daily Initialization Failed**\n\n"
+                        f"Error: {str(e)}\n"
+                        f"Time: {now.strftime('%H:%M:%S %Z')}",
+                        title="Daily Startup Error"
+                    )
+            
             if should_run:
                 # Market is open - ensure feed is running
                 # Check shutdown flag before starting feed
