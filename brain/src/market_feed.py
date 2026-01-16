@@ -1981,12 +1981,54 @@ class MarketFeed:
             logging.error(f"❌ No valid legs for closing {trade_id} - all positions may be closed")
             return
         
+        # CRITICAL FIX: Calculate Net Price for Closing Order to determine Type (Credit vs Debit)
+        # For closing orders:
+        # - If we SELL legs (close longs): We receive money → Credit
+        # - If we BUY legs (close shorts): We pay money → Debit
+        # Calendar/Ratio spreads opened as debit might close as credit if structure sold
+        leg_symbols = [leg['symbol'] for leg in legs]
+        close_quotes = await self._get_quotes(leg_symbols)
+        
+        close_net_price = 0.0
+        missing_quotes = []
+        for leg in legs:
+            quote_data = close_quotes.get(leg['symbol'])
+            if quote_data:
+                price = quote_data['price']
+                qty = leg['quantity']
+                # Standardize: Selling (to close) adds cash (+), Buying (to close) removes cash (-)
+                # Note: 'SELL' in Brain leg maps to 'buy_to_close' in Gatekeeper (close short)
+                #       'BUY' in Brain leg maps to 'sell_to_close' in Gatekeeper (close long)
+                # For net price calculation: SELL = receive money, BUY = pay money
+                if leg['side'] == 'SELL':
+                    # Closing a short position (buying back) → We pay → Debit
+                    close_net_price -= price * qty
+                else:  # leg['side'] == 'BUY'
+                    # Closing a long position (selling) → We receive → Credit
+                    close_net_price += price * qty
+            else:
+                missing_quotes.append(leg['symbol'])
+        
+        if missing_quotes:
+            logging.warning(f"⚠️ Missing quotes for closing legs: {missing_quotes}. Using limit_price for type determination.")
+            # Fallback: If we have limit_price, infer from it
+            # Positive limit_price (what we receive) = Credit, Negative (what we pay) = Debit
+            # Since execution_price is already positive, we'll default to debit for safety
+            close_order_type = 'debit'  # Default to debit (buying back)
+        else:
+            # Determine order type based on net price
+            # Net > 0 = Credit (We receive money when closing)
+            # Net < 0 = Debit (We pay money when closing)
+            close_order_type = 'credit' if close_net_price >= 0 else 'debit'
+            logging.info(f"💰 CLOSE ORDER TYPE ({pos['strategy']}): Net ${close_net_price:+.2f} → Type: {close_order_type}")
+        
         proposal = {
             'symbol': pos['symbol'],
             'strategy': pos['strategy'],
             'side': 'CLOSE',
             'quantity': 1,  # Top-level quantity (usually 1 for spreads)
             'price': round(execution_price, 2),
+            'type': close_order_type,  # CRITICAL: Explicitly tell Gatekeeper if this is credit or debit
             'legs': legs,  # Use legs with actual Tradier quantities
             'context': {
                 'reason': 'Manage Position',
