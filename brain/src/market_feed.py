@@ -506,18 +506,20 @@ class MarketFeed:
                     await asyncio.sleep(30)
                     continue
                 
-                # Periodic Full Sync: Every 10 minutes, sync with Tradier
+                # Periodic Full Sync: Every 5 minutes, sync with Tradier
                 # This ensures Brain's state matches broker reality
-                if (datetime.now() - last_sync).total_seconds() >= 600:  # 10 minutes
+                # INCREASED FREQUENCY: 10 min -> 5 min to catch position changes faster
+                if (datetime.now() - last_sync).total_seconds() >= 300:  # 5 minutes
                     # Sweep stale closing orders before sync to prevent rejection loops
                     await self._sweep_stale_orders()
                     await self.sync_positions_with_tradier()
                     last_sync = datetime.now()
                 
-                # CRITICAL: Lightweight fill reconciliation every 5 minutes
+                # CRITICAL: Lightweight fill reconciliation every 2 minutes
                 # This catches fills that were missed by order status checks
                 # (e.g., if Brain restarted before detecting fill, or order_id was lost)
-                if (datetime.now() - last_reconcile).total_seconds() >= 300:  # 5 minutes
+                # INCREASED FREQUENCY: 5 min -> 2 min to catch fills faster
+                if (datetime.now() - last_reconcile).total_seconds() >= 120:  # 2 minutes
                     await self._reconcile_fills()
                     last_reconcile = datetime.now()
                     
@@ -1646,15 +1648,37 @@ class MarketFeed:
         updated = False
         
         for trade_id, pos in opening_positions.items():
-            # Check if any legs exist in Tradier
+            # Check if ALL legs exist in Tradier (more defensive)
             leg_symbols = [leg.get('symbol') for leg in pos.get('legs', [])]
             found_legs = [sym for sym in leg_symbols if sym in actual_positions]
             
-            if found_legs:
-                # At least some legs exist - position likely filled
-                logging.info(f"✅ RECONCILIATION: Found {len(found_legs)}/{len(leg_symbols)} legs in Tradier for {trade_id}. Marking as OPEN.")
-                pos['status'] = 'OPEN'
-                pos['timestamp'] = now
+            # CRITICAL: Only mark as OPEN if ALL legs are found in Tradier
+            # This prevents assuming a fill when only partial fills occurred
+            if len(found_legs) == len(leg_symbols) and len(leg_symbols) > 0:
+                # ALL legs exist - verify order status is actually filled before marking OPEN
+                # Check order status to confirm it's not still pending
+                order_id = pos.get('open_order_id')
+                if order_id:
+                    order_status = await self._get_order_status(str(order_id))
+                    if order_status == 'filled':
+                        # Order is confirmed filled by Tradier
+                        logging.info(f"✅ RECONCILIATION: Found {len(found_legs)}/{len(leg_symbols)} legs in Tradier AND order {order_id} is 'filled' for {trade_id}. Marking as OPEN.")
+                        pos['status'] = 'OPEN'
+                        pos['timestamp'] = now
+                    elif order_status in ['pending', 'open']:
+                        # Order still pending - don't mark as OPEN yet (may be partial fill)
+                        logging.debug(f"⏳ RECONCILIATION: Found legs in Tradier but order {order_id} is still '{order_status}' for {trade_id}. Waiting for fill confirmation.")
+                        continue
+                    else:
+                        # Order status is None or other - trust Tradier positions if all legs exist
+                        logging.info(f"✅ RECONCILIATION: Found {len(found_legs)}/{len(leg_symbols)} legs in Tradier for {trade_id} (order status unavailable). Marking as OPEN.")
+                        pos['status'] = 'OPEN'
+                        pos['timestamp'] = now
+                else:
+                    # No order ID - trust Tradier positions if all legs exist
+                    logging.info(f"✅ RECONCILIATION: Found {len(found_legs)}/{len(leg_symbols)} legs in Tradier for {trade_id} (no order ID). Marking as OPEN.")
+                    pos['status'] = 'OPEN'
+                    pos['timestamp'] = now
                 
                 # Update quantities from actual positions
                 for leg in pos.get('legs', []):
