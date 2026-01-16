@@ -3598,6 +3598,14 @@ class MarketFeed:
                     'signal_timestamp': signal_time
                 }
                 logging.info(f"📝 Complex Proposal Approved: {trade_id}. Waiting for Entry Fill (Order {order_id})...")
+                
+                # Log leg structure for QA verification (complex orders)
+                if strategy in ['IRON_BUTTERFLY', 'IRON_CONDOR', 'RATIO_SPREAD', 'CALENDAR_SPREAD']:
+                    logging.info(f"🔍 COMPLEX ORDER STRUCTURE ({strategy}):")
+                    for i, leg in enumerate(proposal['legs'], 1):
+                        logging.info(f"   Leg {i}: {leg['side']} {leg['quantity']} {leg['type']} @ ${leg['strike']:.0f} ({leg['symbol']})")
+                    logging.info(f"   Net Credit: ${proposal['price']:.2f} | Order Type: {proposal.get('type', 'credit')}")
+                
                 self._save_positions_to_disk()
             else:
                 logging.error(f"❌ Approved but missing Order ID for {trade_id}. Response: {response}")
