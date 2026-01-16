@@ -426,10 +426,14 @@ class MarketFeed:
             traceback.print_exc()
         return None
 
-    async def _cancel_order(self, order_id: str) -> bool:
+    async def _cancel_order(self, order_id: str, retry_count: int = 0) -> bool:
         """
         Cancel a pending order (uses SANDBOX API where orders are executed)
         Returns True if cancellation succeeded or order already filled/cancelled, False on error
+        
+        Args:
+            order_id: Order ID to cancel
+            retry_count: Internal retry counter (max 2 retries for 500 errors)
         """
         if not self.account_id: 
             await self._fetch_account_id()
@@ -455,6 +459,12 @@ class MarketFeed:
                         order_status = data.get('order', {}).get('status', 'unknown')
                         logging.info(f"🗑️ Cancelled order {order_id} (status: {order_status})")
                         return True
+                    elif resp.status == 500 and retry_count < 2:
+                        # Tradier backend error - retry with exponential backoff
+                        wait_time = (retry_count + 1) * 2  # 2s, 4s
+                        logging.warning(f"⚠️ Tradier 500 error cancelling {order_id}, retrying in {wait_time}s (attempt {retry_count + 1}/2)...")
+                        await asyncio.sleep(wait_time)
+                        return await self._cancel_order(order_id, retry_count + 1)
                     else:
                         # Parse error response for better error details
                         error_text = await resp.text()
@@ -904,39 +914,63 @@ class MarketFeed:
                     # Check timeout (fallback if price didn't move much)
                     sent_time = pos.get('closing_timestamp')
                     if sent_time:
-                        # If pending for > 2 minutes, cancel and retry (likely price moved)
-                        if (now - sent_time).total_seconds() > 120:
-                            if not pos.get('cancelling'):  # Only cancel once
-                                logging.info(f"⏳ Order {order_id} pending too long. Cancelling to repost.")
-                                cancel_success = await self._cancel_order(order_id)
-                                if cancel_success:
-                                    # Mark as cancelling and wait for cancellation to complete
-                                    pos['cancelling'] = True
-                                    pos['cancel_attempt_time'] = now.isoformat()
-                                    self._save_positions_to_disk()
-                                    # Wait longer for cancellation to process (give Tradier time)
-                                    await asyncio.sleep(5)
-                                else:
-                                    # Cancellation failed - might be API error or order already filled
-                                    # Check status one more time before giving up
-                                    await asyncio.sleep(3)
-                                    final_status = await self._get_order_status(order_id)
-                                    if final_status in ['filled', 'canceled']:
-                                        logging.info(f"✅ Order {order_id} is now {final_status} after failed cancel attempt")
-                                        if final_status == 'filled':
-                                            del self.open_positions[trade_id]
-                                            self._save_positions_to_disk()
-                                        else:
-                                            pos['status'] = 'OPEN'
-                                            del pos['close_order_id']
-                                            pos['last_close_attempt'] = now
-                                            self._save_positions_to_disk()
-                                    else:
-                                        # Still pending - wait before retrying cancellation
-                                        logging.info(f"⏳ Order {order_id} still {final_status}, will retry cancellation later")
+                        # Handle string datetime (from JSON)
+                        if isinstance(sent_time, str):
+                            try:
+                                sent_time = datetime.fromisoformat(sent_time)
+                            except (ValueError, TypeError):
+                                logging.warning(f"⚠️ Invalid closing_timestamp for {trade_id}: {sent_time}. Clearing.")
+                                del pos['closing_timestamp']
+                                sent_time = None
+                        
+                        if sent_time and isinstance(sent_time, datetime):
+                            # If pending for > 2 minutes, cancel and retry (likely price moved)
+                            elapsed_seconds = (now - sent_time).total_seconds()
+                            if elapsed_seconds > 120:
+                                if not pos.get('cancelling'):  # Only cancel once
+                                    logging.info(f"⏳ Order {order_id} pending too long ({elapsed_seconds:.0f}s). Cancelling to repost.")
+                                    cancel_success = await self._cancel_order(order_id)
+                                    if cancel_success:
+                                        # Mark as cancelling and wait for cancellation to complete
+                                        pos['cancelling'] = True
                                         pos['cancel_attempt_time'] = now.isoformat()
                                         self._save_positions_to_disk()
-                                        await asyncio.sleep(10)  # Extended delay before next attempt
+                                        # Wait longer for cancellation to process (give Tradier time)
+                                        await asyncio.sleep(5)
+                                    else:
+                                        # Cancellation failed - might be API error or order already filled
+                                        # Check status one more time before giving up
+                                        await asyncio.sleep(3)
+                                        final_status = await self._get_order_status(order_id)
+                                        if final_status in ['filled', 'canceled']:
+                                            logging.info(f"✅ Order {order_id} is now {final_status} after failed cancel attempt")
+                                            if final_status == 'filled':
+                                                del self.open_positions[trade_id]
+                                                self._save_positions_to_disk()
+                                            else:
+                                                # Order was cancelled, reset to OPEN for retry
+                                                pos['status'] = 'OPEN'
+                                                del pos['close_order_id']
+                                                if 'closing_timestamp' in pos:
+                                                    del pos['closing_timestamp']
+                                                pos['last_close_attempt'] = now
+                                                self._save_positions_to_disk()
+                                        else:
+                                            # Still pending - mark as "unfillable" and wait longer
+                                            # Don't spam cancellation attempts
+                                            logging.warning(f"⚠️ Order {order_id} cannot be cancelled (Tradier API issue). Will check status periodically.")
+                                            pos['cancelling'] = False  # Clear cancelling flag
+                                            pos['last_close_attempt'] = now  # Prevent immediate retry
+                                            # Mark that we've tried to cancel (prevent infinite retry loop)
+                                            pos['cancel_failed_count'] = pos.get('cancel_failed_count', 0) + 1
+                                            self._save_positions_to_disk()
+                                            # If we've failed 3+ times, accept that Tradier API is having issues
+                                            # and just wait for the order to resolve naturally (filled or expired)
+                                            if pos.get('cancel_failed_count', 0) >= 3:
+                                                logging.error(f"❌ Order {order_id} cancellation failed 3+ times. Accepting that Tradier API is having issues. Will monitor order status only.")
+                                                pos['cancelling'] = False
+                                                pos['unfillable'] = True  # Mark as unfillable to prevent retry spam
+                                                self._save_positions_to_disk()
                     continue
                 
                 else:
@@ -1113,22 +1147,44 @@ class MarketFeed:
                 # Check if we need to wait before retrying (after cancellation/rejection)
                 last_attempt = pos.get('last_close_attempt')
                 if last_attempt:
-                    # Handle string datetime (from JSON) - convert to datetime if needed
-                    if isinstance(last_attempt, str):
-                        last_attempt = datetime.fromisoformat(last_attempt)
-                    seconds_since_attempt = (now - last_attempt).total_seconds()
-                    # Wait 10 seconds after rejection (longer delay for rejected orders)
-                    # Wait 5 seconds after cancellation
-                    wait_time = 10 if pos.get('close_order_id') else 5
-                    if seconds_since_attempt < wait_time:
-                        logging.debug(f"⏳ Waiting to retry close for {trade_id} ({int(wait_time - seconds_since_attempt)}s remaining)")
-                        continue  # Skip this cycle, try again next time
-                    # Enough time has passed, clear the delay flag
-                    del pos['last_close_attempt']
+                    try:
+                        # Handle string datetime (from JSON) - convert to datetime if needed
+                        if isinstance(last_attempt, str):
+                            last_attempt = datetime.fromisoformat(last_attempt)
+                        elif not isinstance(last_attempt, datetime):
+                            # Invalid type, clear it and continue
+                            logging.warning(f"⚠️ Invalid last_close_attempt type for {trade_id}: {type(last_attempt)}. Clearing.")
+                            del pos['last_close_attempt']
+                            self._save_positions_to_disk()
+                            # Continue without delay
+                        else:
+                            # Valid datetime, calculate delay
+                            seconds_since_attempt = (now - last_attempt).total_seconds()
+                            # Wait 10 seconds after rejection (longer delay for rejected orders)
+                            # Wait 5 seconds after cancellation
+                            wait_time = 10 if pos.get('close_order_id') else 5
+                            if seconds_since_attempt < wait_time:
+                                logging.debug(f"⏳ Waiting to retry close for {trade_id} ({int(wait_time - seconds_since_attempt)}s remaining)")
+                                continue  # Skip this cycle, try again next time
+                            # Enough time has passed, clear the delay flag
+                            del pos['last_close_attempt']
+                    except (ValueError, TypeError, AttributeError) as e:
+                        # Failed to parse or calculate, clear the invalid value
+                        logging.warning(f"⚠️ Error processing last_close_attempt for {trade_id}: {e}. Clearing.")
+                        if 'last_close_attempt' in pos:
+                            del pos['last_close_attempt']
+                        self._save_positions_to_disk()
+                        # Continue without delay
                 
                 # Don't attempt close if already CLOSING (wait for current order to resolve)
                 if pos.get('status') == 'CLOSING':
                     logging.debug(f"⏳ {trade_id} already has close order pending, waiting for resolution...")
+                    continue
+                
+                # Don't attempt close if marked as unfillable (Tradier API issues)
+                if pos.get('unfillable'):
+                    # Still check status periodically, but don't spam new close orders
+                    logging.debug(f"⏳ {trade_id} marked as unfillable (Tradier API issue). Monitoring order status only.")
                     continue
                 
                 logging.info(f"🛑 ATTEMPTING CLOSE {trade_id} | P&L: {pnl_pct:.1f}% | Reason: {reason}")
