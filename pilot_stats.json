@@ -1,6 +1,12 @@
 {
   "trades": [],
-  "regime_changes": [],
+  "regime_changes": [
+    {
+      "timestamp": "2026-01-16T09:53:00.109770",
+      "old_regime": "LOW_VOL_CHOP",
+      "new_regime": "TRENDING"
+    }
+  ],
   "latency_log": [],
   "errors": []
 }

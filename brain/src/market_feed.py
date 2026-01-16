@@ -475,6 +475,7 @@ class MarketFeed:
         logging.info("🛡️ Position Manager: ONLINE")
         last_status_log = datetime.now()
         last_sync = datetime.now()
+        last_reconcile = datetime.now()
         
         # Ensure account ID is ready
         await self._fetch_account_id()
@@ -497,6 +498,13 @@ class MarketFeed:
                     await self._sweep_stale_orders()
                     await self.sync_positions_with_tradier()
                     last_sync = datetime.now()
+                
+                # CRITICAL: Lightweight fill reconciliation every 5 minutes
+                # This catches fills that were missed by order status checks
+                # (e.g., if Brain restarted before detecting fill, or order_id was lost)
+                if (datetime.now() - last_reconcile).total_seconds() >= 300:  # 5 minutes
+                    await self._reconcile_fills()
+                    last_reconcile = datetime.now()
                     
             except Exception as e:
                 logging.error(f"⚠️ Manager Error: {e}")
@@ -1251,11 +1259,12 @@ class MarketFeed:
             removed_count = 0
             
             # 1. Check OPENING positions - see if they've filled
+            # CRITICAL: Also check if any OPEN positions are missing legs (might have been lost on restart)
             for trade_id, pos in list(self.open_positions.items()):
+                leg_symbols = [leg.get('symbol') for leg in pos.get('legs', [])]
+                found_legs = [sym for sym in leg_symbols if sym in tradier_symbols]
+                
                 if pos.get('status') == 'OPENING':
-                    leg_symbols = [leg.get('symbol') for leg in pos.get('legs', [])]
-                    found_legs = [sym for sym in leg_symbols if sym in tradier_symbols]
-                    
                     if found_legs:
                         # Position has filled!
                         logging.info(f"✅ SYNC: {trade_id} has filled ({len(found_legs)}/{len(leg_symbols)} legs in Tradier)")
@@ -1271,6 +1280,23 @@ class MarketFeed:
                                 if actual_qty > 0:
                                     leg['quantity'] = int(actual_qty)
                         
+                        updated_count += 1
+                elif pos.get('status') == 'OPEN':
+                    # CRITICAL FIX: Verify OPEN positions still exist in Tradier
+                    # If Brain thinks position is OPEN but Tradier doesn't have it, it's a ghost
+                    if not found_legs:
+                        logging.warning(f"⚠️ SYNC: {trade_id} marked OPEN but no legs found in Tradier. May be closed externally.")
+                        # Don't delete - might be a temporary API issue. Will be handled by ghost detection below
+                    elif len(found_legs) < len(leg_symbols):
+                        # Partial match - update quantities
+                        logging.info(f"📝 SYNC: {trade_id} partial match ({len(found_legs)}/{len(leg_symbols)} legs). Updating quantities...")
+                        for leg in pos.get('legs', []):
+                            leg_symbol = leg.get('symbol')
+                            actual_pos = actual_positions.get(leg_symbol)
+                            if actual_pos:
+                                actual_qty = abs(float(actual_pos.get('quantity', 0)))
+                                if actual_qty > 0:
+                                    leg['quantity'] = int(actual_qty)
                         updated_count += 1
             
             # 2. Remove ghosts (in Brain but not in Tradier)
@@ -1316,14 +1342,17 @@ class MarketFeed:
                             pos['entry_price'] = round(new_entry, 2)
                             updated_count += 1
             
-            # 4. Adopt orphans (in Tradier but not in Brain)
+            # 4. CRITICAL: Adopt "orphans" (positions in Tradier but not in Brain)
+            # These aren't really orphans - they're positions Gekko opened but Brain lost track of
+            # This happens if Brain restarts before detecting fill, or order_id is lost
             orphans = tradier_symbols - brain_symbols
             if orphans:
-                logging.info(f"🕵️ SYNC: Found {len(orphans)} orphan position(s) in Tradier not tracked by Brain")
+                logging.warning(f"🚨 CRITICAL: Found {len(orphans)} position(s) in Tradier that Brain is NOT tracking!")
+                logging.warning(f"   These are likely positions Gekko opened but Brain lost track of (restart before fill detection?)")
+                logging.warning(f"   Orphan symbols: {sorted(orphans)}")
                 # Use the full orphan adoption logic from reconcile_state
                 # This requires fetching full position data with grouping, so call reconcile_state's logic
-                # For now, trigger a full reconcile which will adopt orphans
-                logging.info(f"   Triggering orphan adoption via reconcile_state...")
+                logging.info(f"   Triggering full reconciliation to adopt lost positions...")
                 await self.reconcile_state()
                 # Re-count after adoption (reconcile_state will save positions)
                 updated_count += len(orphans)
