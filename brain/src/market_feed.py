@@ -159,6 +159,10 @@ class MarketFeed:
                         v['closing_timestamp'] = datetime.fromisoformat(v['closing_timestamp'])
                     if 'opening_timestamp' in v and isinstance(v['opening_timestamp'], str):
                         v['opening_timestamp'] = datetime.fromisoformat(v['opening_timestamp'])
+                    if 'last_close_attempt' in v and isinstance(v['last_close_attempt'], str):
+                        v['last_close_attempt'] = datetime.fromisoformat(v['last_close_attempt'])
+                    if 'cancel_attempt_time' in v and isinstance(v['cancel_attempt_time'], str):
+                        v['cancel_attempt_time'] = datetime.fromisoformat(v['cancel_attempt_time'])
                     
                     # Ensure status is set (recovered positions might not have it)
                     if 'status' not in v or v.get('status') is None:
